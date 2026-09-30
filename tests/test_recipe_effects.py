@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import patch
 import numpy as np
 from scipy.ndimage import uniform_filter
-from kora.recipe_effects import wb_shift_gains, chrome_effect, dynamic_range_compress, tone_curve, linear_tone_curve, selective_tone_detail, protect_unrecoverable_highlights
+from kora.recipe_effects import wb_shift_gains, chrome_effect, dynamic_range_compress, tone_curve, linear_tone_curve, selective_tone_detail
 from kora.studio import render, StudioRecipe
 
 
@@ -156,26 +156,14 @@ class RecipeEffectTests(unittest.TestCase):
                            1.05*float(highpass(lifted).std()))
         self.assertTrue(np.isfinite(recovered).all())
 
-    def test_dng_shoulder_has_no_neutrality_boundary_or_tonal_reversal(self):
-        from kora.recipe_effects import _unrecoverable_highlight_weight
-        luminance=np.linspace(.1,3,1000,dtype=np.float32)
-        source=np.repeat(luminance[None,:,None],3,-1)
-        weight=_unrecoverable_highlight_weight(source)
-        self.assertTrue(np.all(np.diff(weight[0])>=-1e-6))
-        tinted=source.copy();tinted[...,0]+=.2;tinted[...,2]-=.2*.2126/.0722
-        np.testing.assert_allclose(_unrecoverable_highlight_weight(tinted),weight,atol=1e-6)
-        adjusted=linear_tone_curve(source,highlights=-100)
-        result=protect_unrecoverable_highlights(adjusted,np.clip(source,0,1),source)
-        self.assertTrue(np.all(np.diff(result[0,:,0])>=-1e-6))
-
-    def test_neutral_highlight_protection_is_opt_in_for_floating_dng_context(self):
-        source=np.full((24,32,3),2,np.float32)
+    def test_old_dng_context_cannot_cancel_highlight_recovery(self):
+        source=np.repeat(np.linspace(1,3,32,dtype=np.float32)[None,:,None],3,-1)
         recipe=StudioRecipe(highlights=-100,noise_reduction=-4)
         with patch('kora.studio.apply_official',side_effect=lambda a,film:np.clip(a,0,1)):
             ordinary=render(source,recipe)
             protected=render(source,recipe,context={'protect_neutral_clipped_highlights':True})
-        self.assertTrue(np.all(ordinary<1))
-        np.testing.assert_array_equal(protected,1)
+        np.testing.assert_array_equal(protected,ordinary)
+        self.assertTrue(np.all(np.diff(protected[0,:,0])>0))
 
     @unittest.skipIf(missing_luts(), "Official LUT integration: install Fuji assets separately")
     def test_tone_adjustments_keep_official_film_hue_and_raw_luminance(self):
@@ -191,16 +179,100 @@ class RecipeEffectTests(unittest.TestCase):
                 c=edited-np.sum(edited*weights,-1)[...,None]
                 # Hue direction in the RGB chroma plane must not rotate.
                 cross=np.cross(base_c,c)
-                self.assertLess(float(np.abs(cross).max()),2e-6)
-                self.assertTrue(np.all(np.sum(base_c*c,-1)>=-1e-7))
+                reliable=base.max(-1)<=.85
+                self.assertLess(float(np.abs(cross[reliable]).max(initial=0)),2e-6)
+                self.assertTrue(np.all(np.sum(base_c*c,-1)[reliable]>=-1e-7))
 
-    def test_color_stabilization_keeps_gray_and_recovered_highlight_detail(self):
+    def test_color_stabilization_keeps_recovered_color_at_clipped_film_white(self):
         from kora.recipe_effects import preserve_film_hue
         base=np.ones((1,3,3),np.float32)
         magenta=np.array([[[.9,.4,.8],[.8,.3,.7],[.7,.2,.6]]],np.float32)
         out=preserve_film_hue(base,magenta)
-        np.testing.assert_allclose(out[...,0],out[...,1],atol=1e-7)
-        np.testing.assert_allclose(out[...,1],out[...,2],atol=1e-7)
+        np.testing.assert_allclose(out,magenta,atol=1e-7)
         self.assertTrue(np.all(np.diff(out,axis=1)<0))
         weights=np.array([.2126,.7152,.0722],np.float32)
         np.testing.assert_allclose(np.sum(out*weights,-1),np.sum(magenta*weights,-1),atol=1e-7)
+
+    def test_recovered_color_blend_is_continuous_and_preserves_luminance(self):
+        from kora.recipe_effects import preserve_film_hue
+        levels=np.linspace(.84,1,1601,dtype=np.float32)[None,:,None]
+        base=np.repeat(levels,3,-1)
+        adjusted=np.broadcast_to(np.array([.8,.6,.4],np.float32),base.shape)
+        out=preserve_film_hue(base,adjusted)
+        weights=np.array([.2126,.7152,.0722],np.float32)
+        np.testing.assert_allclose(np.sum(out*weights,-1),np.sum(adjusted*weights,-1),atol=2e-7)
+        self.assertLess(np.abs(np.diff(out,axis=1)).max(),.001)
+        gray=np.repeat(levels*.8,3,-1)
+        np.testing.assert_allclose(preserve_film_hue(base,gray),gray,atol=2e-7)
+
+    def test_whites_still_work_after_maximum_highlight_reduction(self):
+        source=np.full((8,16,3),2.,np.float32)
+        highlights=linear_tone_curve(source,highlights=-100)
+        both=linear_tone_curve(source,highlights=-100,whites=-100)
+        self.assertLess(float(both.mean()),float(highlights.mean())*.9)
+
+    def test_highlight_controls_have_fine_steps_and_extended_latitude(self):
+        source=np.repeat(np.array([.08,.18,1.,2.,4.,8.,16.],np.float32)[None,:,None],3,-1)
+        for key in ('highlights','whites'):
+            previous=None
+            for value in (0,-.1,-.2,-1,-10,-25,-50,-75,-100):
+                out=linear_tone_curve(source,**{key:value})
+                np.testing.assert_allclose(out[:,:2],source[:,:2],atol=1e-7)
+                if previous is not None:self.assertTrue(np.all(out[:,2:]<previous[:,2:]))
+                if value==-.1:self.assertLess(float(np.max(np.abs(out/source-1))),.003)
+                previous=out
+        recovered=linear_tone_curve(source,highlights=-100,whites=-100)
+        # Three stops of reduction at the far end, with contrast left in the
+        # bright tail. Requiring 16 -> .55 encoded the old flat grey plateau.
+        self.assertLess(float(recovered[0,-1,0]),2.1)
+        self.assertLess(float(recovered[0,4,0]),.7)
+        self.assertTrue(np.all(np.diff(recovered[0,:,0])>0))
+
+    def test_maximum_recovery_retains_broad_highlight_gradients(self):
+        ev=np.linspace(0,9,4097,dtype=np.float32)
+        source=np.repeat((.18*np.exp2(ev))[None,:,None],3,-1)
+        out=linear_tone_curve(source,highlights=-100,whites=-100)
+        contrast=np.diff(np.log2(out[0,:,0]))/np.diff(ev)
+        # The old curve retained only 1/16 contrast, even across broad skies
+        # where a fine-detail filter cannot help. Keep tonal order and a
+        # useful contrast floor; resume ordinary exposure contrast above it.
+        self.assertGreater(float(contrast.min()),.17)
+        np.testing.assert_allclose(contrast[ev[1:]>6],1,atol=.002)
+
+    def test_opposite_highlight_controls_cannot_reverse_tonal_order(self):
+        source=np.repeat(np.geomspace(.001,64,4096,dtype=np.float32)[None,:,None],3,-1)
+        for highlights in (-100,-50,0,50,100):
+            for whites in (-100,-50,0,50,100):
+                out=linear_tone_curve(source,highlights=highlights,whites=whites)
+                self.assertTrue(np.all(np.diff(out[0,:,0])>0),(highlights,whites))
+
+    def test_highlight_base_compression_retains_fine_raw_texture(self):
+        x=np.arange(512,dtype=np.float32)
+        light=2*np.exp2(.025*np.sin(x*1.3))
+        source=np.broadcast_to(light[None,:,None],(80,512,3)).copy()
+        point=linear_tone_curve(source,-100,whites=-100)
+        detail=linear_tone_curve(source,-100,whites=-100,detail_scale=1)
+        contrast=lambda a:float(np.std(np.log2(a[40,32:-32,0])))
+        self.assertGreater(contrast(detail),.8*contrast(source))
+        self.assertGreater(contrast(detail),4*contrast(point))
+        # A strong edge must not become a bright or dark rim.
+        source[:,:256]=.08;source[:,256:]=4
+        point=linear_tone_curve(source,-100,whites=-100)
+        detail=linear_tone_curve(source,-100,whites=-100,detail_scale=1)
+        np.testing.assert_allclose(detail[:,:256],source[:,:256],atol=1e-6)
+        self.assertLess(float(np.max(np.abs(detail[:,256:]/point[:,256:]-1))),.01)
+
+    def test_highlight_detail_full_and_halo_tile_match(self):
+        source=np.random.default_rng(411).uniform(.02,4,(360,640,3)).astype(np.float32)
+        full=linear_tone_curve(source,-75,whites=-50,detail_scale=2)
+        tile=linear_tone_curve(source[32:328,64:576],-75,whites=-50,detail_scale=2)
+        np.testing.assert_allclose(tile[96:-96,96:-96],full[128:232,160:480],atol=2e-6)
+
+    def test_fractional_tones_survive_recipe_round_trip(self):
+        from pydantic import ValidationError
+        recipe=StudioRecipe(highlights=-37.6,whites=12.3)
+        restored=StudioRecipe.model_validate_json(recipe.model_dump_json())
+        self.assertEqual(restored.highlights,-37.6)
+        self.assertEqual(restored.whites,12.3)
+        for value in (-100.1,100.1,float('nan'),float('inf')):
+            with self.assertRaises(ValidationError):StudioRecipe(highlights=value)

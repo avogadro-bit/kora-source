@@ -49,6 +49,7 @@ class TileRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str
     recipe: Recipe
+    neutral: StrictBool = False
     x: int = Field(ge=0)
     y: int = Field(ge=0)
     size: int = Field(default=512, ge=128, le=1024)
@@ -99,6 +100,7 @@ def export_memory_gib(recipe):
     estimate=6
     tone=any((recipe.highlights,recipe.whites,recipe.shadows,recipe.blacks)) or recipe.dynamic_range!=100 or recipe.dr_priority!='off'
     if tone:estimate+=2 if recipe.film in OFFICIAL_FILMS else 1
+    if recipe.highlight_tone or recipe.shadow_tone:estimate+=1
     if recipe.clarity:estimate+=1
     if recipe.grain!='off':estimate+=1
     if recipe.smooth_skin!='off' or recipe.color_chrome!='off' or recipe.fx_blue!='off':estimate+=1
@@ -108,13 +110,9 @@ def export_memory_gib(recipe):
 
 
 def render_context(path):
-    """Optional source-specific safeguards; never make a render depend on metadata."""
-    try:
-        floating=bool(source_details(path).get('floating_camera_rgb'))
-    except Exception as exc:
-        record_error('source-context-fallback', exc)
-        floating=False
-    return {'protect_neutral_clipped_highlights':floating}
+    """Use the same source WB basis for previews, viewport tiles and exports."""
+    from .camera_white_balance import source_render_context
+    return source_render_context(path)
 
 
 def output_geometry(shape, recipe):
@@ -389,7 +387,7 @@ class Library:
             from .studio import source_details
             info["source_exposure"] = source_details(path)
             info["input_normalization"] = info["source_exposure"].get("normalization",{})
-            info["shooting_settings"] = shooting_settings(info["exif"])
+            info["shooting_settings"] = shooting_settings(info["exif"],restore_wb_shift=info.get("source_exposure",{}).get("white_balance",{}).get("shift_removed",False))
             from .optics import inspect_optics
             try:
                 info["optics"] = inspect_optics(path)
@@ -520,7 +518,7 @@ class Library:
             self.check_export_priority()
         check_current()
         recipe_key=hashlib.sha256(request.recipe.model_dump_json().encode()).hexdigest()[:20]
-        cache_key=(request.id,recipe_key,request.x,request.y,request.size,request.level)
+        cache_key=(request.id,recipe_key,request.neutral,request.x,request.y,request.size,request.level)
         with self.lock:
             if cache_key in self.tile_cache:
                 self.tile_cache.move_to_end(cache_key)
@@ -579,7 +577,7 @@ class Library:
         with self.tile_render_lock:
             with self.tile_slot():
                 check_current()
-                pixels=render(region,request.recipe,output_transform=False,context=context,
+                pixels=render(region,request.recipe,neutral=request.neutral,output_transform=False,context=context,
                               origin=(ry0//level,rx0//level))
         crop_x0=(sx0-rx0)//level;crop_y0=(sy0-ry0)//level
         crop_x1=(sx1-rx0+level-1)//level;crop_y1=(sy1-ry0+level-1)//level
@@ -589,7 +587,7 @@ class Library:
         if pixels.shape[1]!=target_w or pixels.shape[0]!=target_h:
             pixels=np.stack([np.asarray(Image.fromarray(pixels[:,:,channel]).resize(
                 (target_w,target_h),Image.Resampling.LANCZOS)) for channel in range(3)],axis=-1)
-        data,mime=encode(pixels,request.recipe,preview=True)
+        data,mime=encode(pixels,request.recipe,preview=True,detail=True)
         result=(data,mime)
         with self.lock:
             self.tile_cache[cache_key]=result
@@ -757,6 +755,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         route = urlparse(self.path).path
         static = {"/": ("index.html", "text/html; charset=utf-8"),
+                  "/viewer.js": ("viewer.js", "application/javascript; charset=utf-8"),
                   "/app.js": ("app.js", "text/javascript; charset=utf-8"),
                   "/diagnostics.js": ("diagnostics.js", "text/javascript; charset=utf-8"),
                   "/kora.css": ("kora.css", "text/css; charset=utf-8"),

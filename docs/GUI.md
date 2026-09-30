@@ -8,7 +8,7 @@ The ten films marked **Fuji LUT** use official GFX ETERNA 55 tables. Other films
 
 1. Click **Open Folder**. Select Home, Desktop, Pictures, Documents, Downloads, or a configured start folder. Navigate with the folder list, parent button, or breadcrumbs. A manual path field remains available under **Enter a folder path**.
 2. Leave **Include subfolders** enabled to build a recursive library, then click **Choose This Folder**. Up to 5,000 compatible RAW files are shown and the first local photograph opens automatically.
-3. PROVIA / Standard is the initial film simulation. Changing a control updates the preview after a short delay. **Recipe applied** confirms completion.
+3. PROVIA / Standard is the initial film simulation. Changing a control updates the preview after a short delay. **Image ready** confirms that the visible detail has finished loading.
 4. Every photograph keeps its own current recipe. The bottom carousel shows embedded RAW thumbnails: a white **VIEWING** badge identifies the photo on screen, while a gold check identifies every photo in the editing group. Click a thumbnail to work on it alone, or click its selection circle to include or remove it from the group. **Keep current only** clears a group. Selected thumbnails receive the same subsequent adjustments while preserving their other existing values. Use C1–C7 or JSON to save named alternatives.
 5. **View Without Film** compares the independent render with the same RAW development without film simulation or recipe adjustments. It is not a comparison with an in-camera Fuji JPEG.
 6. Select the output options and click **Export Image**. With several JPEG photos selected, the button exports all of them—each with its current recipe—in one ZIP archive. A single photo can still be exported as JPEG or TIFF. Export performs a full-resolution decode before applying output cropping or resizing.
@@ -22,7 +22,7 @@ The library reads local files in place. Individual file imports are copied to a 
 - Double-click the image to alternate between Fit and 100%. Fit recalculates after the window or panel layout changes.
 - Zoom is retained while recipe settings render and resets when another photograph opens.
 
-The embedded JPEG may appear briefly while the RAW is decoded. Recipe changes then use a cached 1,800-pixel linear preview so that the sliders remain responsive. When a photo is opened and the settings remain stable, the application refines it from the full-resolution RAW; changing a setting cancels a refinement that has not started, or immediately detaches from an obsolete one already in progress so the new reduced preview can overtake it. Selecting **100%** or more also requests the full-resolution render. At **100%**, one full-resolution developed image pixel maps to one screen pixel. Export always uses the full-resolution RAW.
+Recipe changes first use a cached 1,800-pixel linear preview to keep the controls responsive. Every view, including **Fit**, then progressively loads detailed regions from the full-resolution RAW at the resolution required by the display. Wait for **Image ready** to judge sharpness. At **100%**, one developed image pixel maps to one physical screen pixel, including on Retina. Visible detail stays in place while panning or changing zoom; cached regions are reused. The comparison without film receives the same refinement and keeps the recipe's crop. Export always uses the full-resolution RAW. See [display validation and limits](DISPLAY_0.2.33.md).
 
 ## Output resolution
 

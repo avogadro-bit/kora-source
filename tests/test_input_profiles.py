@@ -2,11 +2,32 @@ import unittest
 from pathlib import Path
 import tempfile
 import numpy as np
-from kora.input_profiles import camera_profile,validate_linear_input,normalization_details
+from kora.input_profiles import camera_profile,validate_linear_input,normalization_details,apply_input_color,LEICA_Q3_43
 from kora.gui import Library
 from kora.source_exposure import source_exposure
 
 class CommonInputTests(unittest.TestCase):
+    def test_reference_color_is_scoped_to_q3_43_dng_and_preserves_headroom(self):
+        pixels=np.array([[[-.2,.18,3.],[0.,0.,0.],[1.,1.,1.]]],np.float32)
+        metadata={'Make':'LEICA CAMERA AG','Model':'LEICA Q3 43'}
+        profile=source_exposure(metadata,'.DNG')
+        self.assertEqual(profile['input_profile'],LEICA_Q3_43.key)
+        actual=apply_input_color(pixels,profile['input_profile'])
+        np.testing.assert_allclose(actual[0,0],[-.20037966,.18,2.9396148],atol=1e-7)
+        self.assertLess(actual.min(),0);self.assertGreater(actual.max(),1)
+        np.testing.assert_array_equal(actual[0,1],0)
+        np.testing.assert_array_equal(pixels[0,2],1)
+        for make,model,ext in [('LEICA','LEICA Q3','.dng'),('LEICA','LEICA Q2','.dng'),
+                               ('LEICA','LEICA M11','.dng'),('Apple','iPhone 16 Pro','.dng'),
+                               ('FUJIFILM','X-M5','.raf'),('Canon','LEICA Q3 43','.dng'),
+                               ('LEICA','LEICA Q3 43','.raf')]:
+            info=source_exposure({'Make':make,'Model':model},ext)
+            self.assertIs(apply_input_color(pixels,info.get('input_profile')),pixels)
+        d=normalization_details(metadata,'.dng',profile)
+        self.assertFalse(d['fuji_color_calibrated'])
+        self.assertFalse(d['color_refinement']['cross_scene_color_validation'])
+        self.assertFalse(d['color_refinement']['exposure_offset_applied'])
+
     def test_camera_profile_is_scoped_to_leica_make(self):
         for m in [{'Make':'Canon','Model':'LEICA M11'}, {'Make':'Sony','Model':'ILCE-7M4'}]:
             self.assertIsNone(camera_profile(m))

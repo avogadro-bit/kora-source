@@ -6,6 +6,7 @@ from kora.official_luts import (
     FILMS, TO_F_GAMUT, flog2_encode, load_lut, interpolate, apply_official,
     lut_worker_count)
 from kora.studio import StudioRecipe, render
+from kora.classic_negative import refine_classic_negative
 
 
 class OfficialLutTests(unittest.TestCase):
@@ -34,14 +35,16 @@ class OfficialLutTests(unittest.TestCase):
         np.testing.assert_allclose(interpolate(table,samples),samples,atol=1e-6)
 
     @unittest.skipIf(missing_luts(), "Official LUT integration: install Fuji assets separately")
-    def test_all_ten_verified_tables_render_without_artistic_film_overlay(self):
+    def test_all_ten_verified_tables_render_with_declared_photo_adaptation(self):
         self.assertEqual(len(FILMS),10)
         a=np.random.default_rng(15).uniform(0,1,(24,32,3)).astype(np.float32)
         for film in FILMS:
             with self.subTest(film=film):
                 self.assertEqual(load_lut(film).shape,(65,65,65,3))
                 output=render(a,StudioRecipe(film=film))
-                np.testing.assert_allclose(output,apply_official(a,film),atol=2e-6)
+                expected=apply_official(a,film)
+                if film=='classic_negative':expected=refine_classic_negative(expected)
+                np.testing.assert_allclose(output,expected,atol=2e-6)
                 self.assertTrue(np.isfinite(output).all())
                 self.assertTrue(((output>=0)&(output<=1)).all())
         self.assertGreater(float(abs(apply_official(a,'provia')-apply_official(a,'classic_negative')).mean()),.02)
@@ -49,8 +52,11 @@ class OfficialLutTests(unittest.TestCase):
     @unittest.skipIf(missing_luts(), "Official LUT integration: install Fuji assets separately")
     def test_exposure_above_one_reaches_lut_before_display_clipping(self):
         a=np.full((2,2,3),.8,np.float32)
-        np.testing.assert_allclose(render(a,StudioRecipe(film='classic_negative',exposure=1)),
-                                   apply_official(a*2,'classic_negative'),atol=1e-6)
+        actual=render(a,StudioRecipe(film='classic_negative',exposure=1))
+        expected=refine_classic_negative(apply_official(a*2,'classic_negative'))
+        clipped=refine_classic_negative(apply_official(np.clip(a*2,0,1),'classic_negative'))
+        np.testing.assert_allclose(actual,expected,atol=1e-6)
+        self.assertGreater(float(abs(actual-clipped).max()),.001)
 
     @unittest.skipIf(missing_luts(), "Official LUT integration: install Fuji assets separately")
     def test_parallel_lut_is_identical_to_single_thread(self):

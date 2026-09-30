@@ -2,6 +2,97 @@
 
 Ces notes décrivent les étapes antérieures ; suivre README.md pour installer la version actuelle.
 
+## 0.2.33 — Affichage détaillé en vue entière et sur Retina
+
+La vue entière charge désormais les détails du RAW après le premier aperçu,
+avec une résolution adaptée à la densité de l'écran. Le zoom à 100 % correspond
+à un pixel de photo par pixel physique. Les détails déjà disponibles restent
+visibles pendant les déplacements et les changements de zoom ; les régions
+en cache sont réutilisées. Même qualité pour la comparaison sans film, avec
+conservation du cadrage. [Vérifications et limites](docs/DISPLAY_0.2.33.md).
+
+## 0.2.32 — Transitions et contraste des hautes lumières
+
+Correction des donneurs de couleur partiellement saturés dans les DNG Leica,
+transition plus progressive vers le blanc et courbe RAW qui conserve davantage
+de contraste aux minima Highlights/Whites. Cas reproduits sur L1007741 et
+L1003382, en PROVIA et Classic Negative. Les références d'exposition RAF et
+les deux commandes de tonalité Fuji de 0.2.31 sont préservées.
+[Détails et limites](docs/HIGHLIGHTS_0.2.32.md).
+
+## 0.2.31 — Commandes Highlight Tone et Shadow Tone
+
+Ajout des deux commandes Fuji de −2 à +4 par demi-pas, avec une réponse
+mesurée sur 50 variantes X-M5 Classic Negative / DR100. L'écart moyen de
+réponse diminue de 43 % sur trois scènes réservées au contrôle. Les quatre
+corrections RAW restent séparées et les anciennes recettes sont préservées.
+Cette amélioration ne constitue pas une équivalence au moteur natif Fuji.
+[Méthode, résultats et limites](docs/FUJI_TONE_0.2.31.md).
+
+## 0.2.30 — Ajustement d'entrée Leica Q3 43
+
+Petite correction du biais bleuté en entrée, dérivée de la façade commune de
+L1007724.DNG et DSCF5367.RAF, avec contrôle sur les exports natifs X-M5.
+L'exposition différente des deux prises de vue n'est pas intégrée au profil.
+Portée limitée aux DNG du Q3 43 ; contrôle de stabilité sur quatre autres DNG.
+Noms des films simplifiés dans le menu, provenance conservée dans la description.
+[Méthode, mesures et limites](docs/LEICA_PAIR_0.2.30.md).
+
+## 0.2.29 — Adaptations photo communes aux RAW multimarques
+
+Classic Negative, PRO Neg. Hi, Nostalgic Negative et la force ajustée de Color
+Chrome s'appliquent désormais à tous les RAW pris en charge, après conversion
+dans l'espace de travail commun. Les films sont disponibles dans le menu sans
+restriction X-M5. Le grain et les réglages Highlights/Whites étaient déjà communs.
+Les coefficients WB propres au X-M5 restent limités à ce modèle.
+[Portée et vérifications](docs/MULTIRAW_FILMS_0.2.29.md).
+
+## 0.2.28 — Classic Negative pour les RAF X-M5
+
+Correction chromatique mesurée sur les références X-M5, en conservant la
+luminosité et les gris du rendu précédent. Les cinq rendus de départ se
+rapprochent des JPEG du boîtier ; 245 variantes ont été comparées, avec un gain
+moyen mais des limites persistantes sur certains ciels et réglages poussés.
+[Mesures et limites](docs/CLASSIC_NEGATIVE_0.2.28.md).
+
+## 0.2.27 — Corrections vérifiées avec le X-M5
+
+395 variantes exportées par X RAW STUDIO et le X-M5, sur cinq scènes : grain
+plus proche des références, WB Auto et préréglages appliqués dans l'espace du
+capteur, décalage R/B corrigé, Color Chrome moins excessif sur X-M5. Adaptations
+PRO Neg. Hi et Nostalgic Neg. disponibles pour les RAF X-M5, validées sur trois
+scènes distinctes de celles utilisées pour l'ajustement. Correction des libellés
+ASTIA/PROVIA/Velvia à l'import. Le moteur reste une approximation ; toutes les
+simulations et commandes ne sont pas équivalentes au boîtier.
+[Détails, mesures et limites](docs/XM5_CALIBRATION.md).
+
+## 0.2.26 — Base WB neutre pour les RAF Fuji Auto compatibles
+
+Les décalages R/B du boîtier ne sont plus inclus dans le point de départ lorsque
+le RAF fournit les coefficients Auto sans décalage. Correction vérifiée sur les
+RAF X-M5, avec exposition de référence séparée et signalement des cas non pris
+en charge. [Détails](docs/FUJI_WB_BASE_0.2.26.md).
+
+## 0.2.25 — Réglages Highlights et Whites plus précis
+
+Whites conserve son action après une forte baisse des Highlights. Réponse plus
+progressive près de zéro, réduction étendue en fin de course et conservation
+bornée des détails avant la simulation de film. Saisie au dixième dans le GUI.
+[Détails et limites](docs/HIGHLIGHTS_AND_WHITES_0.2.25.md).
+
+## 0.2.24 — Correction des couleurs dans les hautes lumières
+
+Suppression des plaques cyan/magenta introduites en 0.2.22 et conservées en
+0.2.23 sur les grandes zones partiellement saturées. Estimation progressive
+à partir de couleurs non saturées, sans frontières de proximité, et transition
+continue lorsque le dernier canal sature. Grain inchangé.
+[Détails et validation](docs/HIGHLIGHT_REGRESSION_0.2.24.md).
+
+## 0.2.23 — Grain inspiré des références Fuji
+
+Texture plus fine, échelle photographique stable, intégration des aperçus et
+continuité du grain au zoom. [Détails et limites](docs/GRAIN_0.2.23.md).
+
 ## 2026-09-16 — KŌRA 0.2.0 macOS application
 
 - Added a self-contained macOS `.app`, ZIP, and DMG release build.
@@ -166,3 +257,8 @@ Chaque région possède `address`, `size` (multiples de 4096), `permissions` et 
 Le banc générique ne charge pas directement un DAT. L’extracteur et les probes X-T4 ajoutent deux modules et des fonctions identifiées, avec des empreintes obligatoires. Le RTOS complet et les accélérateurs d’image restent à reconstruire. Les rapports gardent `image_pipeline_validated: false` même si une fonction atteint son adresse de fin.
 
 Les nouveaux probes peuvent aussi charger l’extrait système de `main.bin`. `initialized_only` et `valid_ranges` gardent les octets inconnus interdits dans une page allouée ; `write_initializes` suit les octets initialisés par des écritures natives. `memory_trace` conserve des observations bornées. [Usage et limites](docs/NATIVE_RUNTIME.md).
+# 0.2.22 — Recover partially clipped Leica highlights
+
+Preserve surviving RAW colour and texture when both Bayer green sites saturate.
+Remove the brightness-only return to white and let recovered colour through the
+film shoulder. See [validation and limits](docs/HIGHLIGHT_RECOVERY_0.2.22.md).

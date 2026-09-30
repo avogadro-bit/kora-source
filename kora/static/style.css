@@ -184,3 +184,11 @@ body.layout-resizing{cursor:col-resize;user-select:none}body.layout-resizing.ver
  .activity-slot{margin-left:auto}.view-toolbar #focus-view{margin-left:0}
  .viewer-bar #compare{max-width:75px}.photo-filters>span{display:none}
 }
+
+/* Exact tonal values alongside the photographic sliders. */
+.range-row label input.tone-value{display:inline-block;width:66px;margin:0;padding:3px 4px;text-align:right;font-size:11px;font-variant-numeric:tabular-nums;background:transparent;border:1px solid transparent;border-radius:3px}
+.range-row label input.tone-value:hover,.range-row label input.tone-value:focus{border-color:var(--line);background:#1b1f1b}
+.range-row label input.tone-value:disabled{opacity:.45}
+.tone-note{font-size:11px;line-height:1.5;opacity:.75;margin:8px 0 14px}
+.tone-recovery{margin-top:18px}
+.tone-recovery>summary{font-size:12px;cursor:pointer;padding:8px 0}

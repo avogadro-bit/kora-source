@@ -17,7 +17,7 @@ redistributed by this project. See [macOS release and Gatekeeper notes](docs/MAC
 ## Features
 
 - Intuitive input-folder browser with familiar locations, breadcrumbs, optional subfolders, and multi-camera RAW support through LibRaw (RAF, DNG, CR3, NEF, ARW, RW2, and others).
-- Collapsible side panels, preview zoom, and panning.
+- Collapsible side panels, progressive RAW detail in Fit view, Retina-aware zoom, and panning that retains loaded detail.
 - Film simulations, exposure, DR, highlight and shadow tone, white balance with an R/B grid, color, grain, and effects.
 - A recipe for every photograph, plus clear multi-selection in the bottom carousel for linked adjustments.
 - JSON recipes, C1–C7 slots, without-film comparison, color-managed JPEG or 8/16-bit TIFF export, and JPEG batch export as ZIP.
@@ -27,7 +27,7 @@ redistributed by this project. See [macOS release and Gatekeeper notes](docs/MAC
 
 Python **3.11 or newer** is required for development. The public application download is currently macOS only.
 
-[Download KŌRA for macOS](https://github.com/avogadro-bit/kora-source/releases/tag/v0.2.21).
+[Download KŌRA 0.2.33 for macOS](https://github.com/avogadro-bit/kora-source/releases/tag/v0.2.33).
 
 The Python module and command are named `kora`. Existing LUT directories and saved
 macOS settings are detected automatically. Legacy identifiers are isolated in
@@ -83,10 +83,12 @@ python -m pip install -e '.[emulation,optics]'
 python -m unittest discover -s tests -v
 python -m compileall -q kora scripts tests
 node --check kora/static/app.js
+node --check kora/static/viewer.js
+node --test tests/test_connection.cjs tests/test_diagnostics_js.cjs tests/test_film_choices_js.cjs tests/test_viewer.cjs
 python scripts/check_release.py
 ```
 
-Color integration tests are skipped explicitly when the LUTs are not installed. Synthetic tests, HTTP checks, and the installer run without private photos, firmware, or a network connection. The native workbench uses Unicorn and Capstone through the `emulation` extra; they are not needed to run the studio. Node is used only for JavaScript syntax validation.
+Color integration tests are skipped explicitly when the LUTs are not installed. Synthetic tests, HTTP checks, and the installer run without private photos, firmware, or a network connection. The native workbench uses Unicorn and Capstone through the `emulation` extra; they are not needed to run the studio. Node validates JavaScript syntax and runs viewer, connection, diagnostics, and film-choice tests.
 
 The sharing check inspects both tracked and unignored files. It does not replace a manual review of files before publication. See the [sharing audit](docs/SHARING_AUDIT.md), [third-party resources](THIRD_PARTY.md), and [GUI guide](docs/GUI.md).
 

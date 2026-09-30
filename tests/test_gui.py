@@ -80,9 +80,10 @@ class StaticGuiTests(unittest.TestCase):
         self.assertIn('image.dataset.x=x;image.dataset.y=y;image.dataset.width=width;image.dataset.height=height',script)
         self.assertIn('layoutDetailTiles();',script)
         self.assertIn('if(delay<=0){refreshVisibleTiles();return;}',script)
-        self.assertIn('zoomMode=next;updateView(0);',script)
-        self.assertIn('function detailLevel()',script)
-        self.assertIn('level:tileLevel',script)
+        self.assertIn('KoraViewer.planTiles',script)
+        self.assertIn('KoraViewer.DetailQueue',script)
+        self.assertIn('await image.decode()',script)
+        self.assertIn('src="/viewer.js"',page)
         self.assertNotIn('viewScale<1',script)
         self.assertNotIn('queueRender("full")',script)
         self.assertNotIn('scale(${viewScale})',script)
@@ -92,7 +93,7 @@ class StaticGuiTests(unittest.TestCase):
         for control in ('Highlights","highlights"','Whites","whites"',
                         'Shadows","shadows"','Blacks","blacks"'):
             self.assertIn(control,script)
-        self.assertIn('SCREEN-QUALITY PREVIEW',script)
+        self.assertIn('QUICK PREVIEW',script)
         self.assertIn('body:JSON.stringify({id,recipe:settings,quality:"interactive"})',script)
         self.assertIn('renderController?.abort()',script)
 
@@ -146,7 +147,13 @@ class GuiServerTests(unittest.TestCase):
         with patch('kora.optics.inspect_optics',return_value={**profile,'source':'test-full'}), \
              patch('kora.studio.apply_official',side_effect=lambda pixels,*args:pixels):
             expected=library.render_tile(request)
-        self.assertEqual(actual,expected)
+        # ICC profiles include their creation time; crossing a second must
+        # not make an otherwise identical regional render fail this check.
+        from PIL import Image
+        from io import BytesIO
+        self.assertEqual(actual[1],expected[1])
+        np.testing.assert_array_equal(np.asarray(Image.open(BytesIO(actual[0]))),
+                                      np.asarray(Image.open(BytesIO(expected[0]))))
 
     def test_superseded_tile_is_rejected_before_decode(self):
         from unittest.mock import patch
@@ -184,6 +191,17 @@ class GuiServerTests(unittest.TestCase):
         self.assertFalse(observed[0][1]['output_transform'])
         self.assertEqual(observed[0][1]['context']['full_shape'],pixels.shape)
         self.assertEqual(encoder.call_count,1)
+        self.assertTrue(encoder.call_args.kwargs['detail'])
+
+        # Comparing without film must have an independent tile cache, while
+        # retaining the exact same crop/zoom geometry as the recipe.
+        neutral=request.model_copy(update={'neutral':True})
+        with patch('kora.gui.render',side_effect=renderer), \
+             patch('kora.gui.encode',side_effect=lambda tile,*args,**kwargs:(tile.shape,'image/jpeg')):
+            shape,mime=self.server.library.render_tile(neutral)
+        self.assertEqual(shape,(128,128,3))
+        self.assertEqual(len(observed),2)
+        self.assertTrue(observed[-1][1]['neutral'])
 
         level_two=TileRequest(id=item['id'],recipe=StudioRecipe(noise_reduction=-4),x=128,y=128,size=128,level=2)
         with patch('kora.gui.render',side_effect=lambda region,*args,**kwargs:region), \

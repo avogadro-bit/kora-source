@@ -12,15 +12,15 @@ let thumbnailQueue=[],thumbnailWorkers=0,thumbnailTimer;
 let thumbnailWorkerLimit=2;
 let fullResolutionPrefetch=false,prefetchTimer,prefetchedId=null;
 let exportInProgress=false,lastExportTiming=null;
-let shootingSettings=null, opticsInfo=null;
+let shootingSettings=null, opticsInfo=null, sourceCamera=null;
 let engineState=null;
 let nativeWindow=false;
 let recipeFolder=null;
 let undoStack=[],future=[],copiedSettings=null;
 let renderRevision=0, renderTimer, renderBusy=false, renderAgain=false, renderURL, beforeURL, comparing=false, currentRenderQuality=null, renderController=null;
-let fullWidth=0,fullHeight=0,tileTimer,tileGeneration=0,tileLoading=0;
+let fullWidth=0,fullHeight=0,tileTimer,tileGeneration=0,previewVariant=null;
 window.filmDiagnosticContext=()=>({client_version:$("#app-version")?.textContent||"",photo_id:selected?.id||"",film:recipe?.film||"",grain:recipe?.grain||"",grain_size:recipe?.grain_size||"",zoom:typeof viewScale==="number"?viewScale:0,pan_x:panX,pan_y:panY,width:fullWidth,height:fullHeight,revision:renderRevision,generation:tileGeneration});
-const tileControllers=new Set(),tileURLs=new Map();
+const tileURLs=new Map();
 const tileViewId=crypto.randomUUID();
 const films = [
  ["provia","PROVIA / Standard","Balanced color for everyday photography."], ["velvia","Velvia / Vivid","A vivid palette with deep color."],
@@ -32,7 +32,7 @@ const films = [
  ["monochrome","Monochrome","A classic black and white rendering."], ["sepia","Sepia","Brown-toned monochrome."]
 ];
 const officialFilms = new Set(["provia","velvia","astia","classic_chrome","classic_negative","pro_neg_std","eterna","eterna_bleach","reala_ace","acros"]);
-const wb = [["camera","As Shot"],["auto","Auto"],["auto_white","Auto White Priority"],["auto_ambience","Auto Ambience Priority"],["daylight","Daylight"],["shade","Shade"],["tungsten","Tungsten"],["fluorescent1","Fluorescent 1"],["fluorescent2","Fluorescent 2"],["fluorescent3","Fluorescent 3"],["underwater","Underwater"],["kelvin","Color Temperature"]];
+const wb = [["camera","Camera"],["auto","Auto"],["auto_white","Auto White Priority"],["auto_ambience","Auto Ambience Priority"],["daylight","Daylight"],["shade","Shade"],["tungsten","Tungsten"],["fluorescent1","Fluorescent 1"],["fluorescent2","Fluorescent 2"],["fluorescent3","Fluorescent 3"],["underwater","Underwater"],["kelvin","Color Temperature"]];
 const effect = [["off","Off"],["weak","Weak"],["strong","Strong"]];
 function element(tag, text, className) { const e = document.createElement(tag); if(text !== undefined) e.textContent = text; if(className)e.className=className; return e; }
 function toast(text) { clearTimeout(toastTimer); $("#toast").textContent=text; $("#toast").hidden=false; toastTimer=setTimeout(()=>$("#toast").hidden=true,4500); }
@@ -81,7 +81,33 @@ document.addEventListener("visibilitychange",checkConnection);
 setInterval(checkConnection,15000);
 function section(name) { const e=element("section",undefined,"control-section");e.append(element("h3",name));$("#controls").append(e);return e; }
 function select(parent, label, key, choices) {const l=element("label",label),s=element("select");s.dataset.key=key;for(const [v,t] of choices){const o=element("option",t);o.value=v;s.append(o);}l.append(s);parent.append(l);}
-function slider(parent,label,key,min,max,step=1) {const row=element("div",undefined,"range-row"),l=element("label",label),o=element("output"),i=element("input");i.type="range";i.min=min;i.max=max;i.step=step;i.dataset.key=key;i.id="control-"+key;l.htmlFor=i.id;o.dataset.output=key;l.append(o);row.append(l,i);parent.append(row);}
+function slider(parent,label,key,min,max,step=1) {
+ const precise=key==="highlights"||key==="whites";
+ const row=element("div",undefined,"range-row"),l=element("label",label),o=element(precise?"input":"output"),i=element("input");
+ i.type="range";i.min=min;i.max=max;i.step=precise ? .1 : step;i.dataset.key=key;i.id="control-"+key;l.htmlFor=i.id;
+ if(precise){
+  o.type="number";o.min=min;o.max=max;o.step=.1;o.dataset.toneValue=key;o.className="tone-value";
+  o.setAttribute("aria-label",label+" value");o.title="Type a value · arrows: 0.1 · Shift + arrows: 1";
+  const commit=()=>{
+   const value=Number(o.value);
+   if(o.value===""||!Number.isFinite(value)){o.value=recipe?.[key]??0;return;}
+   const next=Math.round(Math.max(min,Math.min(max,value))*10)/10;
+   o.value=next;if(next===recipe?.[key])return;
+   i.value=next;i.dispatchEvent(new Event("input",{bubbles:true}));
+  };
+  o.addEventListener("change",commit);o.addEventListener("blur",commit);
+  o.addEventListener("keydown",e=>{
+   if(e.key==="Enter"){e.preventDefault();commit();o.blur();}
+   if(e.key==="Escape"){o.value=recipe?.[key]??0;o.blur();}
+  });
+  for(const control of [i,o])control.addEventListener("keydown",e=>{
+   if(!e.shiftKey||!["ArrowUp","ArrowRight","ArrowDown","ArrowLeft"].includes(e.key))return;
+   e.preventDefault();control.value=Math.max(min,Math.min(max,Number(control.value)+(["ArrowUp","ArrowRight"].includes(e.key)?1:-1)));
+   control.dispatchEvent(new Event(control===i?"input":"change",{bubbles:true}));
+  });
+ }else{o.dataset.output=key;}
+ l.append(o);row.append(l,i);parent.append(row);
+}
 function setupWBGrid(parent){
  const wrap=element("div",undefined,"wb-grid-wrap"),title=element("div","WHITE BALANCE SHIFT","wb-grid-title");
  const canvas=element("canvas");canvas.id="wb-grid";canvas.width=380;canvas.height=380;canvas.tabIndex=0;canvas.setAttribute("role","group");canvas.setAttribute("aria-label","White balance grid. Left and right arrows adjust red. Up and down arrows adjust blue. Home centers the marker.");
@@ -119,11 +145,14 @@ function drawWBGrid(){
  const sign=n=>n>0?"+"+n:String(n);$("#wb-grid-value").textContent=`R : ${sign(recipe.wb_red)}   B : ${sign(recipe.wb_blue)}`;
  canvas.setAttribute("aria-description",`Red ${recipe.wb_red}, Blue ${recipe.wb_blue}`);
 }
+const referenceFilms=new Set(["pro_neg_hi","nostalgic_negative","classic_negative"]);
+function hasReferenceFilm(film){return referenceFilms.has(film);}
+function filmSourceLabel(film){return hasReferenceFilm(film)?"PHOTO APPROXIMATION":officialFilms.has(film)?"FUJIFILM LUT":"INTERPRETATION";}
 function syncFilmChoices(currentFilm){
  const menu=$("#film");menu.replaceChildren();
- for(const [v,t] of films){if(!officialFilms.has(v))continue;const o=element("option",t+" · Fuji LUT");o.value=v;menu.append(o);}
+ for(const [v,t] of films){if(!officialFilms.has(v)&&!hasReferenceFilm(v))continue;const o=element("option",t);o.value=v;menu.append(o);}
  // Preserve legacy recipes without offering their retired simulations for selection.
- if(currentFilm&&!officialFilms.has(currentFilm)){
+ if(currentFilm&&!officialFilms.has(currentFilm)&&!hasReferenceFilm(currentFilm)){
   const name=films.find(f=>f[0]===currentFilm)?.[1]||currentFilm;
   const o=element("option",name+" · legacy recipe (retired)");o.value=currentFilm;o.disabled=true;menu.append(o);
  }
@@ -131,7 +160,13 @@ function syncFilmChoices(currentFilm){
 }
 function setupControls(){
  syncFilmChoices();
- let s=section("LIGHT & CONTRAST");select(s,"Dynamic Range","dynamic_range",[[100,"DR100"],[200,"DR200"],[400,"DR400"]]);select(s,"D Range Priority","dr_priority",[["off","Off"],["auto","Auto"],["weak","Weak"],["strong","Strong"]]);select(s,"Push / Pull · EV","exposure",Array.from({length:19},(_,i)=>{const v=Number(((i-9)/3).toFixed(6));return [v,(v>0?"+":"")+v.toFixed(2)];}));slider(s,"Highlights","highlights",-100,100);slider(s,"Whites","whites",-100,100);slider(s,"Shadows","shadows",-100,100);slider(s,"Blacks","blacks",-100,100);
+ let s=section("LIGHT & CONTRAST");select(s,"Dynamic Range","dynamic_range",[[100,"DR100"],[200,"DR200"],[400,"DR400"]]);select(s,"D Range Priority","dr_priority",[["off","Off"],["auto","Auto"],["weak","Weak"],["strong","Strong"]]);select(s,"Push / Pull · EV","exposure",Array.from({length:19},(_,i)=>{const v=Number(((i-9)/3).toFixed(6));return [v,(v>0?"+":"")+v.toFixed(2)];}));
+ slider(s,"Highlight Tone","highlight_tone",-2,4,.5);slider(s,"Shadow Tone","shadow_tone",-2,4,.5);
+ s.append(element("p","− softens · + hardens. Response based on X-M5 references; rendering remains an approximation.","tone-note"));
+ s.append(element("p","DR100 keeps normal contrast. DR200 and DR400 progressively protect highlights.","tone-note"));
+ const recovery=element("details",undefined,"tone-recovery");recovery.id="tone-recovery";
+ recovery.append(element("summary","RAW recovery · additional controls"),element("p","Independent KŌRA corrections. Whites and Blacks have no separate X RAW STUDIO equivalent.","tone-note"));s.append(recovery);
+ slider(recovery,"Highlights","highlights",-100,100);slider(recovery,"Whites","whites",-100,100);slider(recovery,"Shadows","shadows",-100,100);slider(recovery,"Blacks","blacks",-100,100);
  s=section("WHITE BALANCE");select(s,"Mode","wb",wb);slider(s,"Color Temperature · K","kelvin",2500,10000,10);slider(s,"Red Shift","wb_red",-9,9);slider(s,"Blue Shift","wb_blue",-9,9);setupWBGrid(s);
  s=section("COLOR & DETAIL");slider(s,"Color","color",-4,4);slider(s,"Sharpness","sharpness",-4,4);slider(s,"Clarity","clarity",-5,5);slider(s,"Noise Reduction","noise_reduction",-4,4);
  s=section("TEXTURE & EFFECTS");const grid=element("div",undefined,"select-grid");s.append(grid);select(grid,"Grain Effect","grain",effect);select(grid,"Grain Size","grain_size",[["small","Small"],["large","Large"]]);select(grid,"Color Chrome Effect","color_chrome",effect);select(grid,"Color Chrome FX Blue","fx_blue",effect);select(s,"Monochromatic Filter","mono_filter",[["none","None"],["yellow","Yellow"],["red","Red"],["green","Green"]]);
@@ -150,14 +185,16 @@ function populate(){
  syncFilmChoices(recipe.film);
  drawWBGrid();updateOpticsStatus();
  for(const input of document.querySelectorAll("[data-key]")){input.value=recipe[input.dataset.key] ?? defaults[input.dataset.key];const out=document.querySelector(`[data-output="${input.dataset.key}"]`);if(out)out.textContent=Number(input.value)>0&&input.dataset.key!=="kelvin"?"+"+input.value:input.value;}
- $("#film-description").textContent=officialFilms.has(recipe.film)?"Official Fujifilm LUT · GFX ETERNA 55 · uncalibrated photo adaptation.":"Independent interpretation · this film has no LUT in the official pack.";
+ for(const input of document.querySelectorAll("[data-tone-value]")){input.value=recipe[input.dataset.toneValue];input.disabled=recipe.dr_priority!=="off";}
+ $("#film-description").textContent=hasReferenceFilm(recipe.film)?"Photo approximation based on X-M5 references · adapted to your RAW.":officialFilms.has(recipe.film)?"Official Fujifilm LUT · GFX ETERNA 55 · uncalibrated photo adaptation.":"Independent interpretation · this film has no LUT in the official pack.";
  const unsupported=recipe.target_model==="X-T4"&&["reala_ace","nostalgic_negative"].includes(recipe.film);
  $("#validation-note").textContent=unsupported?"This simulation is unavailable on the X-T4.":"";
  $("#control-kelvin").disabled=recipe.wb!=="kelvin";
  const mono=["acros","monochrome","sepia"].includes(recipe.film);
  for(const key of ["mono_filter","mono_warm","mono_green"])document.querySelector(`[data-key="${key}"]`).disabled=!mono;
  document.querySelector('[data-key="image_quality"]').disabled=recipe.file_type!=="jpeg";
- for(const key of ["dynamic_range","highlights","whites","shadows","blacks"])document.querySelector(`[data-key="${key}"]`).disabled=recipe.dr_priority!=="off";
+ for(const key of ["dynamic_range","highlight_tone","shadow_tone","highlights","whites","shadows","blacks"])document.querySelector(`[data-key="${key}"]`).disabled=recipe.dr_priority!=="off";
+ if(["highlights","whites","shadows","blacks"].some(key=>Number(recipe[key]||0)!==0))$("#tone-recovery").open=true;
 }
 function selectedTargets(){return selectedIds.size?[...selectedIds]:(selected?[selected.id]:[]);}
 function syncActiveRecipe(){if(selected&&recipe)recipesById.set(selected.id,structuredClone(recipe));}
@@ -220,19 +257,19 @@ async function openPhoto(f,preserveSelection=false){
  syncActiveRecipe();
  if(!preserveSelection){selectedIds.clear();selectedIds.add(f.id);undoStack=[];future=[];}else if(!selectedIds.has(f.id)){selectedIds.add(f.id);}
  ensureRecipe(f.id,recipe||defaults);recipe=structuredClone(ensureRecipe(f.id));
- opticsInfo=null;shootingSettings=null;currentRenderQuality=null;fullWidth=fullHeight=0;clearDetailTiles(true);$("#shooting").disabled=true;const version=++selectionVersion;renderRevision++;comparing=false;beforeURL && URL.revokeObjectURL(beforeURL);beforeURL=null;selected=f;$("#export-image").disabled=true;$("#compare").disabled=true;populate();drawLibrary();$("#filename").textContent=f.name;$("#file-subtitle").textContent=f.format+" · "+f.group;$("#preview").hidden=true;$("#empty").hidden=true;$("#loading").hidden=false;$("#zoom").disabled=true;resetView();$("#recipe-state").textContent=selectedIds.size>1?`Editing ${selectedIds.size} selected photos`:"Photo recipe restored";$("#preview-kind").textContent="Opening…";
+ opticsInfo=null;shootingSettings=null;sourceCamera=null;currentRenderQuality=null;previewVariant=null;fullWidth=fullHeight=0;clearDetailTiles(true);$("#shooting").disabled=true;const version=++selectionVersion;renderRevision++;comparing=false;beforeURL && URL.revokeObjectURL(beforeURL);beforeURL=null;selected=f;$("#export-image").disabled=true;$("#compare").disabled=true;populate();drawLibrary();$("#filename").textContent=f.name;$("#file-subtitle").textContent=f.format+" · "+f.group;$("#preview").hidden=true;$("#empty").hidden=true;$("#loading").hidden=false;$("#zoom").disabled=true;resetView();$("#recipe-state").textContent=selectedIds.size>1?`Editing ${selectedIds.size} selected photos`:"Photo recipe restored";$("#preview-kind").textContent="Opening…";
  try{
   const info=await api("/api/photo/"+f.id);if(version!==selectionVersion)return;
-  fullWidth=info.developed_size?.width||info.sizes.width;fullHeight=info.developed_size?.height||info.sizes.height;opticsInfo=info.optics;updateOpticsStatus();shootingSettings=info.shooting_settings;$("#shooting").disabled=!shootingSettings;const x=info.exif;$("#file-subtitle").textContent=[info.input_normalization?.label||f.format, `Developed ${fullWidth} × ${fullHeight}`, info.source_exposure?.ev ? `Base${info.source_exposure.reference_matched?" estimated":""} ${info.source_exposure.ev>0?"+":""}${info.source_exposure.ev.toFixed(2)} EV` : null].filter(Boolean).join(" · ");
+  fullWidth=info.developed_size?.width||info.sizes.width;fullHeight=info.developed_size?.height||info.sizes.height;opticsInfo=info.optics;updateOpticsStatus();shootingSettings=info.shooting_settings;$("#shooting").disabled=!shootingSettings;const x=info.exif;sourceCamera=String(x.Model||"").trim().toUpperCase();populate();$("#file-subtitle").textContent=[info.input_normalization?.label||f.format, `Developed ${fullWidth} × ${fullHeight}`, info.source_exposure?.ev ? `Base${info.source_exposure.reference_matched?" estimated":""} ${info.source_exposure.ev>0?"+":""}${info.source_exposure.ev.toFixed(2)} EV` : null].filter(Boolean).join(" · ");
   $("#photo-info").textContent=[info.input_normalization?.label||f.format,x.FNumber?"ƒ/"+x.FNumber:null,x.ExposureTime?x.ExposureTime+" s":null,x.ISO?"ISO "+x.ISO:null].filter(Boolean).join("   ·   ")||"File metadata";
-  if(info.preview_available){if(!embeddedPictures.has(f.id)){const blob=await api("/api/preview/"+f.id);if(version!==selectionVersion)return;embeddedPictures.set(f.id,URL.createObjectURL(blob));while(embeddedPictures.size>32){const key=embeddedPictures.keys().next().value;URL.revokeObjectURL(embeddedPictures.get(key));embeddedPictures.delete(key);}}if(version!==selectionVersion)return;$("#preview").src=embeddedPictures.get(f.id);$("#preview").hidden=false;$("#zoom").disabled=false;$("#preview-kind").textContent="EMBEDDED PREVIEW · recipe not applied";drawLibrary();}
+  if(info.preview_available&&!info.source_exposure?.white_balance?.shift_removed){if(!embeddedPictures.has(f.id)){const blob=await api("/api/preview/"+f.id);if(version!==selectionVersion)return;embeddedPictures.set(f.id,URL.createObjectURL(blob));while(embeddedPictures.size>32){const key=embeddedPictures.keys().next().value;URL.revokeObjectURL(embeddedPictures.get(key));embeddedPictures.delete(key);}}if(version!==selectionVersion)return;$("#preview").src=embeddedPictures.get(f.id);$("#preview").hidden=false;$("#zoom").disabled=false;$("#preview-kind").textContent="EMBEDDED PREVIEW · recipe not applied";drawLibrary();}
   else{$("#preview-kind").textContent="Developing RAW…";}
   scheduleRender(0);
  }catch(e){reportError(e,"handled");if(version===selectionVersion){toast(e.message);$("#preview-kind").textContent=e.message;$("#photo-info").textContent="This file could not be opened.";}}
  finally{if(version===selectionVersion)$("#loading").hidden=true;}
 }
 function applySettings(value){recordUndo();applyFullToSelection(value);populate();persist();scheduleRender(0);}
-$("#shooting").onclick=()=>{if(shootingSettings){applySettings(shootingSettings);toast("Recognized EXIF settings applied. White balance was already included during decoding; import is partial.");}};
+$("#shooting").onclick=()=>{if(shootingSettings){applySettings(shootingSettings);toast("Recognized capture settings applied. Import remains partial.");}};
 $("#undo").onclick=()=>{if(!undoStack.length)return;future.push(restoreSnapshot(undoStack.pop()));populate();persist();scheduleRender(0);};
 $("#redo").onclick=()=>{if(!future.length)return;undoStack.push(restoreSnapshot(future.pop()));populate();persist();scheduleRender(0);};
 $("#copy-settings").onclick=()=>{copiedSettings=structuredClone(recipe);toast("Settings copied.");};
@@ -241,7 +278,7 @@ $("#store-preset").onclick=()=>{try{localStorage.setItem("film-studio-"+$("#pres
 $("#recall-preset").onclick=async()=>{try{const slot=$("#preset-slot").value,body=localStorage.getItem("film-studio-"+slot)||localStorage.getItem("fuji-studio-"+slot);if(!body)return toast("This slot is empty.");const result=await api("/api/recipe",{method:"POST",headers:{"Content-Type":"application/json"},body});applySettings(result.recipe);}catch(e){reportError(e,"handled");toast(e.message);}};
 function scheduleRender(delay=70){
  if(beforeURL)URL.revokeObjectURL(beforeURL);beforeURL=null;
- renderRevision++;currentRenderQuality=null;comparing=false;clearDetailTiles(true); $("#compare").textContent="View Without Film";
+ renderRevision++;currentRenderQuality=null;previewVariant=null;comparing=false;clearDetailTiles(true); $("#compare").textContent="View Without Film";
  $("#export-image").disabled=true;$("#compare").disabled=true;$("#recipe-state").textContent="Settings pending…";
  clearTimeout(renderTimer);
  renderTimer=setTimeout(queueRender,delay);
@@ -265,14 +302,17 @@ async function updateRender(){
  try{
   const blob=await api("/api/render",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id,recipe:settings,quality:"interactive"}),signal:controller.signal});
   if(revision!==renderRevision||id!==selected?.id)return;
-  if(renderURL)URL.revokeObjectURL(renderURL);renderURL=URL.createObjectURL(blob);
+  const nextURL=await decodedPreviewURL(blob);
+  if(revision!==renderRevision||id!==selected?.id){URL.revokeObjectURL(nextURL);return;}
+  const previousURL=renderURL;renderURL=nextURL;previewVariant="recipe";
   $("#preview").src=renderURL;$("#preview").hidden=false;$("#zoom").disabled=false;
+  if(previousURL)URL.revokeObjectURL(previousURL);
  currentRenderQuality="interactive";
- $("#preview-kind").textContent="SCREEN-QUALITY PREVIEW · "+(officialFilms.has(settings.film)?"FUJIFILM LUT · ":"INTERPRETATION · ")+(films.find(f=>f[0]===settings.film)?.[1]||settings.film);
-  $("#recipe-state").textContent="Recipe applied";
+ $("#preview-kind").textContent="QUICK PREVIEW · "+(films.find(f=>f[0]===settings.film)?.[1]||settings.film);
+  $("#recipe-state").textContent="Refining image…";
   if(pictures.has(id))URL.revokeObjectURL(pictures.get(id));pictures.set(id,URL.createObjectURL(blob));while(pictures.size>32){const key=pictures.keys().next().value;URL.revokeObjectURL(pictures.get(key));pictures.delete(key);}drawLibrary();
   $("#export-image").disabled=false;$("#compare").disabled=false;updateSelectionState();
-  scheduleTileRefresh(0);
+  updateView(180);
   scheduleFullPrefetch(id);
  }catch(e){reportError(e,"handled");if(e.name!=="AbortError"&&revision===renderRevision){toast(e.message);$("#recipe-state").textContent="Render failed · previous preview";}}
  finally{if(renderController===controller)renderController=null;renderBusy=false;$("#loading").hidden=true;if(renderAgain||revision!==renderRevision){renderAgain=false;queueRender();}}
@@ -280,17 +320,20 @@ async function updateRender(){
 $("#compare").onclick=async()=>{
  if(!selected||!renderURL)return;
  const id=selected.id,rev=renderRevision;
+ $("#compare").disabled=true;
  try{
-  if(!beforeURL){const b=await api("/api/render",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id,recipe:{...defaults,lens_distortion:recipe.lens_distortion,lens_vignetting:recipe.lens_vignetting},neutral:true,quality:currentRenderQuality||"interactive"})});if(id!==selected?.id||rev!==renderRevision)return;beforeURL=URL.createObjectURL(b);}
+  if(!beforeURL){const b=await api("/api/render",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id,recipe,neutral:true,quality:"interactive"})});if(id!==selected?.id||rev!==renderRevision)return;const url=await decodedPreviewURL(b);if(id!==selected?.id||rev!==renderRevision){URL.revokeObjectURL(url);return;}beforeURL=url;}
   comparing=!comparing;$("#preview").src=comparing?beforeURL:renderURL;
-  if(comparing)clearDetailTiles(false);else scheduleTileRefresh(0);
+  previewVariant=comparing?"neutral":"recipe";clearDetailTiles(false);
   $("#compare").textContent=comparing?"View Recipe":"View Without Film";
-  $("#preview-kind").textContent=comparing?"RAW BASE · no film simulation or recipe settings":(officialFilms.has(recipe.film)?"AFTER · official Fujifilm LUT":"AFTER · independent interpretation");
+  $("#preview-kind").textContent=comparing?"RAW BASE · no film simulation or recipe settings":("AFTER · "+filmSourceLabel(recipe.film));
+  updateView(0);
  }catch(e){reportError(e,"handled");toast(e.message);}
+ finally{if(id===selected?.id&&rev===renderRevision)$("#compare").disabled=false;}
 };
 $("#export-image").onclick=async()=>{
  if(!selected||exportInProgress)return;exportInProgress=true;lastExportTiming=null;syncActiveRecipe();const targets=files.filter(file=>selectedIds.has(file.id));
- clearTimeout(tileTimer);clearTimeout(prefetchTimer);clearDetailTiles(false);
+ clearTimeout(tileTimer);clearTimeout(prefetchTimer);detailQueue.pause();
  const started=performance.now(),baseLabel=targets.length>1?`Exporting ${targets.length} full-resolution JPEGs`:"Exporting full-resolution image",showElapsed=()=>{$("#export-image").textContent=`${baseLabel}… ${Math.floor((performance.now()-started)/1000)} s`;};
  $("#export-image").disabled=true;showElapsed();const elapsedTimer=setInterval(showElapsed,1000);
  try{let blob,download,message;if(targets.length>1){const items=targets.map(file=>({id:file.id,recipe:structuredClone(ensureRecipe(file.id))}));if(items.some(item=>item.recipe.file_type!=="jpeg"))throw new Error("Batch export supports JPEG only. Select JPEG in Crop & Output.");blob=await api("/api/export-batch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items})});download=`kora-${targets.length}-photos.zip`;message=`${targets.length} JPEGs exported with their current recipes.`;}else{const settings=structuredClone(recipe);blob=await api("/api/export",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:selected.id,recipe:settings})});download=selected.name.replace(/\.[^.]+$/,"-")+settings.film+(settings.file_type==="jpeg"?".jpg":".tif");message="Image exported with its current recipe.";}
@@ -356,10 +399,31 @@ let drags=0;document.addEventListener("dragenter",e=>{if(e.dataTransfer.types.in
 setupControls();
 (async()=>{try{const data=await api("/api/library");rawExtensions=new Set(data.engine.raw_extensions||[".raf",".dng"]);thumbnailWorkerLimit=Math.max(2,Math.min(8,Number(data.performance?.thumbnail_workers)||2));fullResolutionPrefetch=!!data.performance?.full_resolution_prefetch;$("#file-input").accept=[...rawExtensions].join(",");files=[];defaults=data.recipe;recipe=structuredClone(defaults);populate();drawLibrary();renderRecipeLibrary(null);updateLutSetup(data.engine);$("#input-folder").textContent="Choose a folder to begin";const savedRecipeFolder=localStorage.getItem("film-recipe-folder");if(savedRecipeFolder)loadRecipeFolder(savedRecipeFolder,{quiet:true}).catch(e=>{reportError(e,"handled");localStorage.removeItem("film-recipe-folder");renderRecipeLibrary(null);});if(data.engine.missing_luts?.length)$("#setup-dialog").showModal();}catch(e){reportError(e,"handled");toast(e.message);$("#file-subtitle").textContent="Reopen the full link displayed in the terminal.";}})();
 
-// Viewer: a responsive whole-image proxy stays underneath source-resolution
-// RAW tiles. At 100% one output pixel equals one screen pixel.
+// The quick image remains underneath progressively decoded RAW tiles in EVERY
+// view. Zoom percentages count physical screen pixels, including Retina.
 let zoomMode="fit",viewScale=1,panX=0,panY=0,panGesture=null;
-const viewport=$("#canvas"),photo=$("#preview"),detailLayer=$("#detail-layer"),TILE_SIZE=512;
+const viewport=$("#canvas"),photo=$("#preview"),detailLayer=$("#detail-layer"),TILE_SIZE=768;
+const detailNodes=new Map(),tileDecodes=new Map();
+let activeTilePlan=null;
+const screenDensity=()=>KoraViewer.density(window.devicePixelRatio);
+const detailQueue=new KoraViewer.DetailQueue({
+ cached:key=>tileURLs.has(key),
+ load:(tile,signal)=>api("/api/tile",{method:"POST",headers:{"Content-Type":"application/json"},
+  body:JSON.stringify({id:tile.id,recipe:tile.settings,neutral:tile.neutral,x:tile.x,y:tile.y,
+   size:TILE_SIZE,level:tile.level,view_id:tileViewId,generation:tile.generation}),signal}),
+ ready:async(tile,blob)=>{
+  if(tile.generation!==tileGeneration)return;
+  const previous=tileURLs.get(tile.key);if(previous)URL.revokeObjectURL(previous);
+  tileURLs.set(tile.key,URL.createObjectURL(blob));
+  await addDetailTile(tile);trimTileCache();
+ },
+ error:error=>reportError(error,"viewer.detail"),
+ state:()=>updateDetailStatus()
+});
+async function decodedPreviewURL(blob){
+ const url=URL.createObjectURL(blob),image=new Image();image.src=url;
+ try{await image.decode();return url;}catch(error){URL.revokeObjectURL(url);throw error;}
+}
 function outputGeometry(){
  let w=fullWidth||photo.naturalWidth,h=fullHeight||photo.naturalHeight;if(!w||!h)return {width:0,height:0};
  let cw=Math.floor(w/Number(recipe?.digital_crop||1)),ch=Math.floor(h/Number(recipe?.digital_crop||1));
@@ -368,58 +432,85 @@ function outputGeometry(){
  if(edge<Math.max(cw,ch)){const maximum=Math.max(cw,ch);cw=Math.max(1,Math.round(cw*edge/maximum));ch=Math.max(1,Math.round(ch*edge/maximum));}
  return {width:cw,height:ch};
 }
-function fitScale(){const geometry=outputGeometry();return Math.min(viewport.clientWidth/geometry.width,viewport.clientHeight/geometry.height,1);}
+function fitScale(){const geometry=outputGeometry();return Math.min(viewport.clientWidth/geometry.width,viewport.clientHeight/geometry.height,1/screenDensity());}
 function clearDetailTiles(dropCache=false){
- clearTimeout(tileTimer);tileGeneration++;for(const controller of tileControllers)controller.abort();tileControllers.clear();tileLoading=0;detailLayer.replaceChildren();detailLayer.hidden=true;
+ clearTimeout(tileTimer);tileGeneration++;detailQueue.pause();activeTilePlan=null;
+ detailLayer.replaceChildren();detailNodes.clear();tileDecodes.clear();detailLayer.hidden=true;
  if(dropCache){for(const url of tileURLs.values())URL.revokeObjectURL(url);tileURLs.clear();}
 }
-function addDetailTile(key,x,y,width,height){
- const url=tileURLs.get(key);if(!url)return;const image=element("img");image.src=url;image.alt="";image.dataset.x=x;image.dataset.y=y;image.dataset.width=width;image.dataset.height=height;detailLayer.append(image);layoutDetailTiles(image);
+function trimTileCache(){
+ while(tileURLs.size>128){
+  const key=[...tileURLs.keys()].find(key=>!detailNodes.has(key)&&!tileDecodes.has(key)&&!activeTilePlan?.keys.has(key));
+  if(!key)break;URL.revokeObjectURL(tileURLs.get(key));tileURLs.delete(key);
+ }
+}
+function addDetailTile(tile){
+ const {key,x,y,width,height,level,generation}=tile;
+ if(detailNodes.has(key))return Promise.resolve();
+ if(tileDecodes.has(key))return tileDecodes.get(key);
+ const url=tileURLs.get(key);if(!url)return Promise.resolve();
+ // Keep recently visible tiles warm when the user pans back.
+ tileURLs.delete(key);tileURLs.set(key,url);
+ const pending=(async()=>{
+  const image=element("img");image.alt="";image.decoding="async";image.src=url;
+  try{
+   await image.decode();
+   if(generation!==tileGeneration||!activeTilePlan?.keys.has(key))return;
+   image.dataset.x=x;image.dataset.y=y;image.dataset.width=width;image.dataset.height=height;image.dataset.level=level;
+   detailNodes.set(key,image);detailLayer.append(image);detailLayer.hidden=false;layoutDetailTiles(image);
+   updateDetailStatus();
+  }catch(error){
+   if(tileURLs.get(key)===url){tileURLs.delete(key);URL.revokeObjectURL(url);}
+   throw error;
+  }finally{if(tileDecodes.get(key)===pending)tileDecodes.delete(key);}
+ })();tileDecodes.set(key,pending);return pending;
 }
 function layoutDetailTiles(only){
  const images=only?[only]:detailLayer.querySelectorAll("img");
- for(const image of images){image.style.left=Number(image.dataset.x)*viewScale+"px";image.style.top=Number(image.dataset.y)*viewScale+"px";image.style.width=Number(image.dataset.width)*viewScale+"px";image.style.height=Number(image.dataset.height)*viewScale+"px";}
+ for(const image of images){image.style.left=Number(image.dataset.x)*viewScale+"px";image.style.top=Number(image.dataset.y)*viewScale+"px";image.style.width=Number(image.dataset.width)*viewScale+"px";image.style.height=Number(image.dataset.height)*viewScale+"px";image.style.zIndex=Number(image.dataset.level)===activeTilePlan?.level?2:1;}
 }
 function scheduleTileRefresh(delay=120){
  clearTimeout(tileTimer);
- if(exportInProgress||!selected||comparing||zoomMode==="fit"||!fullWidth||!fullHeight){detailLayer.hidden=true;return;}
+ if(exportInProgress||!selected||!previewVariant||!fullWidth||!fullHeight)return;
  if(delay<=0){refreshVisibleTiles();return;}
  tileTimer=setTimeout(refreshVisibleTiles,delay);
 }
-function detailLevel(){
- const maximum=Math.max(1,Math.min(8,1/viewScale));return 2**Math.floor(Math.log2(maximum));
+function updateDetailStatus(){
+ const plan=activeTilePlan;if(!plan||exportInProgress||!previewVariant)return;
+ const ready=plan.visible.every(tile=>detailNodes.has(tile.key));
+ if(ready){
+  // Keep the old level visible until every replacement in the viewport is
+  // decoded. Switching levels must not flash the 1800-pixel quick preview.
+  for(const [key,image] of detailNodes)if(!plan.keys.has(key)){image.remove();detailNodes.delete(key);}
+  $("#preview-kind").textContent=(comparing?"RAW BASE · HIGH QUALITY":zoomMode==="fit"?"HIGH QUALITY · FIT":"SOURCE-RESOLUTION DETAIL")+" · "+(comparing?"Without film":films.find(f=>f[0]===recipe.film)?.[1]||recipe.film);
+  $("#recipe-state").textContent="Image ready";
+ }else{
+  $("#recipe-state").textContent=plan.visible.some(t=>detailQueue.failed.has(t.key))?"Some detail unavailable · move or zoom to retry":"Refining image…";
+ }
 }
-async function refreshVisibleTiles(){
- if(exportInProgress||!selected||comparing||zoomMode==="fit")return;
- const geometry=outputGeometry(),displayWidth=geometry.width*viewScale,displayHeight=geometry.height*viewScale;
- const imageLeft=(viewport.clientWidth-displayWidth)/2+panX,imageTop=(viewport.clientHeight-displayHeight)/2+panY;
- const x0=Math.max(0,Math.floor((-imageLeft)/viewScale)),y0=Math.max(0,Math.floor((-imageTop)/viewScale));
- const x1=Math.min(geometry.width,Math.ceil((viewport.clientWidth-imageLeft)/viewScale)),y1=Math.min(geometry.height,Math.ceil((viewport.clientHeight-imageTop)/viewScale));
- const tileLevel=detailLevel(),tileSpan=TILE_SIZE*tileLevel;
- const startX=Math.max(0,Math.floor(x0/tileSpan)-1)*tileSpan,startY=Math.max(0,Math.floor(y0/tileSpan)-1)*tileSpan;
- const endX=Math.min(geometry.width,(Math.ceil(x1/tileSpan)+1)*tileSpan),endY=Math.min(geometry.height,(Math.ceil(y1/tileSpan)+1)*tileSpan);
- const generation=++tileGeneration,id=selected.id,revision=renderRevision,settings=structuredClone(recipe),missing=[];
- for(const controller of tileControllers)controller.abort();tileControllers.clear();detailLayer.replaceChildren();detailLayer.hidden=false;
- for(let y=startY;y<endY;y+=tileSpan)for(let x=startX;x<endX;x+=tileSpan){const width=Math.min(tileSpan,geometry.width-x),height=Math.min(tileSpan,geometry.height-y),key=`${id}:${revision}:${tileLevel}:${x}:${y}`;if(tileURLs.has(key))addDetailTile(key,x,y,width,height);else missing.push({x,y,width,height,key});}
- if(!missing.length){$("#preview-kind").textContent="SOURCE-RESOLUTION DETAIL · "+(officialFilms.has(recipe.film)?"FUJIFILM LUT":"INTERPRETATION");return;}
- missing.sort((a,b)=>Math.hypot(a.x+a.width/2-(x0+x1)/2,a.y+a.height/2-(y0+y1)/2)-Math.hypot(b.x+b.width/2-(x0+x1)/2,b.y+b.height/2-(y0+y1)/2));
- let failures=0;tileLoading=missing.length;$("#recipe-state").textContent="Loading source detail…";
- async function worker(){
-  while(missing.length&&generation===tileGeneration){const tile=missing.shift(),controller=new AbortController();tileControllers.add(controller);
-   try{const blob=await api("/api/tile",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id,recipe:settings,x:tile.x,y:tile.y,size:TILE_SIZE,level:tileLevel,view_id:tileViewId,generation}),signal:controller.signal});
-    if(generation!==tileGeneration||id!==selected?.id){continue;}const url=URL.createObjectURL(blob);tileURLs.set(tile.key,url);while(tileURLs.size>128){const oldest=tileURLs.keys().next().value;URL.revokeObjectURL(tileURLs.get(oldest));tileURLs.delete(oldest);}addDetailTile(tile.key,tile.x,tile.y,tile.width,tile.height);
-   }catch(error){reportError(error,"handled");if(error.name!=="AbortError"&&generation===tileGeneration){failures++;$("#recipe-state").textContent="Source detail unavailable · proxy retained";}}
-   finally{tileControllers.delete(controller);if(generation===tileGeneration)tileLoading--;}
+function refreshVisibleTiles(){
+ if(exportInProgress||!selected||!previewVariant)return;
+ const geometry=outputGeometry(),id=selected.id,revision=renderRevision,settings=structuredClone(recipe);
+ const plan=KoraViewer.planTiles({...geometry,viewportWidth:viewport.clientWidth,viewportHeight:viewport.clientHeight,
+  scale:viewScale,panX,panY,dpr:screenDensity(),size:TILE_SIZE});
+ const tiles=plan.tiles.map(t=>({...t,id,settings,neutral:comparing,generation:tileGeneration,
+  key:`${id}:${revision}:${previewVariant}:${t.level}:${t.x}:${t.y}`}));
+ activeTilePlan={...plan,tiles,visible:tiles.filter(t=>t.visible),keys:new Set(tiles.map(t=>t.key))};
+ for(const [key,image] of detailNodes){
+  const {x0,y0,x1,y1}=plan.bounds||{},x=Number(image.dataset.x),y=Number(image.dataset.y);
+  if(!activeTilePlan.keys.has(key)&&(x>=x1||y>=y1||x+Number(image.dataset.width)<=x0||y+Number(image.dataset.height)<=y0)){
+   image.remove();detailNodes.delete(key);
   }
  }
- await Promise.all(Array.from({length:Math.min(2,missing.length)},worker));
- if(generation===tileGeneration&&!failures){$("#preview-kind").textContent="SOURCE-RESOLUTION DETAIL · "+(officialFilms.has(recipe.film)?"FUJIFILM LUT":"INTERPRETATION");$("#recipe-state").textContent="Recipe applied · source detail ready";}
+ layoutDetailTiles();
+ for(const tile of tiles)if(tileURLs.has(tile.key))addDetailTile(tile).catch(error=>{detailQueue.failed.add(tile.key);reportError(error,"viewer.decode");updateDetailStatus();});
+ detailQueue.update(tiles);trimTileCache();
 }
 function updateView(tileDelay=120){
  const ready=!photo.hidden&&photo.naturalWidth>0;
  for(const id of ["zoom","zoom-in","zoom-out"])$("#"+id).disabled=!ready;
  if(!ready)return;
- viewScale=zoomMode==="fit"?fitScale():Number(zoomMode);
+ viewScale=zoomMode==="fit"?fitScale():KoraViewer.scaleForZoom(Number(zoomMode),screenDensity());
  const geometry=outputGeometry(),displayWidth=geometry.width*viewScale,displayHeight=geometry.height*viewScale;
  const maxX=Math.max(0,(displayWidth-viewport.clientWidth)/2),maxY=Math.max(0,(displayHeight-viewport.clientHeight)/2);
  panX=Math.max(-maxX,Math.min(maxX,panX));panY=Math.max(-maxY,Math.min(maxY,panY));
@@ -432,8 +523,8 @@ function updateView(tileDelay=120){
  layoutDetailTiles();
  viewport.classList.toggle("pannable",maxX>0||maxY>0);
  const select=$("#zoom");select.querySelector('[data-custom]')?.remove();
- const val=zoomMode==="fit"?"fit":String(viewScale);
- if(![...select.options].some(o=>o.value===val)){const o=element("option",Math.round(viewScale*100)+" %");o.value=val;o.dataset.custom="1";select.append(o);}
+ const val=zoomMode==="fit"?"fit":String(zoomMode);
+ if(![...select.options].some(o=>o.value===val)){const o=element("option",Math.round(Number(zoomMode)*100)+" %");o.value=val;o.dataset.custom="1";select.append(o);}
  select.value=val;
  scheduleTileRefresh(tileDelay);
 }
@@ -441,20 +532,29 @@ function resetView(){zoomMode="fit";panX=panY=0;updateView(0);}
 function changeZoom(value,point){
  if(photo.hidden||!photo.naturalWidth)return;
  if(value==="fit"){resetView();return;}
- const next=Math.max(.1,Math.min(4,Number(value))),box=viewport.getBoundingClientRect();
+ const next=Math.max(.02,Math.min(4,Number(value))),nextScale=KoraViewer.scaleForZoom(next,screenDensity()),box=viewport.getBoundingClientRect();
  const x=point?point.clientX-box.left-viewport.clientWidth/2:0,y=point?point.clientY-box.top-viewport.clientHeight/2:0;
- panX=x-(x-panX)*next/viewScale;panY=y-(y-panY)*next/viewScale;zoomMode=next;updateView(0);
+ panX=x-(x-panX)*nextScale/viewScale;panY=y-(y-panY)*nextScale/viewScale;zoomMode=next;updateView(100);
 }
 photo.addEventListener("load",()=>updateView(0));photo.draggable=false;
-$("#zoom").title="At 100%, visible tiles are rendered from the full-resolution RAW.";
+$("#zoom").title="100% = one image pixel per screen pixel. Fit also loads high-quality RAW detail.";
 $("#zoom").onchange=e=>changeZoom(e.target.value);
-$("#zoom-in").onclick=()=>changeZoom(viewScale*1.25);$("#zoom-out").onclick=()=>changeZoom(viewScale/1.25);
-viewport.addEventListener("wheel",e=>{if(photo.hidden)return;e.preventDefault();changeZoom(viewScale*Math.exp(-e.deltaY*(e.deltaMode===1?.04:.002)),e);},{passive:false});
+$("#zoom-in").onclick=()=>changeZoom(viewScale*screenDensity()*1.25);$("#zoom-out").onclick=()=>changeZoom(viewScale*screenDensity()/1.25);
+viewport.addEventListener("wheel",e=>{if(photo.hidden)return;e.preventDefault();changeZoom(viewScale*screenDensity()*Math.exp(-e.deltaY*(e.deltaMode===1?.04:.002)),e);},{passive:false});
 viewport.addEventListener("dblclick",e=>{if(!photo.hidden)changeZoom(zoomMode==="fit"?1:"fit",e);});
 viewport.addEventListener("pointerdown",e=>{if(e.button!==0||photo.hidden||!viewport.classList.contains("pannable"))return;panGesture={x:e.clientX,y:e.clientY,px:panX,py:panY};viewport.setPointerCapture(e.pointerId);viewport.classList.add("dragging");e.preventDefault();});
 viewport.addEventListener("pointermove",e=>{if(!panGesture)return;panX=panGesture.px+e.clientX-panGesture.x;panY=panGesture.py+e.clientY-panGesture.y;updateView();});
 for(const event of ["pointerup","pointercancel","lostpointercapture"])viewport.addEventListener(event,()=>{panGesture=null;viewport.classList.remove("dragging");scheduleTileRefresh(0);});
 new ResizeObserver(()=>updateView()).observe(viewport);
+// Moving a window between displays can change density without changing its
+// CSS dimensions. Re-evaluate both physical zoom and tile resolution.
+let densityQuery;
+function watchDensity(){
+ densityQuery?.removeEventListener("change",densityChanged);
+ densityQuery=matchMedia(`(resolution: ${screenDensity()}dppx)`);densityQuery.addEventListener("change",densityChanged);
+}
+function densityChanged(){watchDensity();updateView(0);}
+watchDensity();
 
 // Resizable framing around the photograph. Values are local UI preferences;
 // double-clicking any separator restores that edge to its default size.

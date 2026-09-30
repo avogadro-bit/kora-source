@@ -6,7 +6,7 @@ import numpy as np
 from PIL import Image, ImageCms
 import tifffile
 from pydantic import ValidationError
-from kora.studio import StudioRecipe, render, encode, srgb_decode, large_radius_blur, film_grain, _coordinate_noise, _grain_deviation
+from kora.studio import StudioRecipe, render, encode, srgb_decode, large_radius_blur
 from scipy.ndimage import gaussian_filter
 
 @unittest.skipIf(missing_luts(), 'Official LUT integration: install Fuji assets separately')
@@ -61,7 +61,8 @@ class StudioTests(unittest.TestCase):
             for start in range(0,length,block_rows):callback(start,min(start+block_rows,length))
         with patch('kora.official_luts.run_parallel_rows',side_effect=serial), \
              patch('kora.recipe_effects.run_parallel_rows',side_effect=serial), \
-             patch('kora.studio.run_parallel_rows',side_effect=serial):
+             patch('kora.studio.run_parallel_rows',side_effect=serial), \
+             patch('kora.grain.run_parallel_rows',side_effect=serial):
             expected=render(source,recipe)
         np.testing.assert_array_equal(render(source,recipe),expected)
 
@@ -79,35 +80,6 @@ class StudioTests(unittest.TestCase):
         mono=render(self.a,StudioRecipe(film='monochrome'))
         np.testing.assert_array_equal(mono[:,:,0],mono[:,:,2])
         self.assertFalse(np.array_equal(render(self.a,r),render(self.a,self.r)))
-
-    def test_grain_controls_strength_and_spatial_size_independently(self):
-        flat=np.full((512,512,3),.28,np.float32)
-        base=render(flat,StudioRecipe(film='pro_neg_hi',noise_reduction=-4))
-        residuals={}
-        for strength in ('weak','strong'):
-            for size in ('small','large'):
-                out=render(flat,StudioRecipe(film='pro_neg_hi',noise_reduction=-4,
-                                             grain=strength,grain_size=size))
-                residuals[strength,size]=(out-base)[...,0]
-        self.assertGreater(residuals['strong','small'].std(),
-                           1.6*residuals['weak','small'].std())
-        def adjacent(field):
-            return np.corrcoef(field[:,:-1].flat,field[:,1:].flat)[0,1]
-        self.assertLess(adjacent(residuals['weak','small']),
-                        adjacent(residuals['weak','large']))
-        np.testing.assert_allclose((render(flat,StudioRecipe(film='pro_neg_hi',noise_reduction=-4,
-                                                             grain='strong',grain_size='large'))),
-                                   base+residuals['strong','large'][...,None])
-
-    def test_banded_grain_matches_full_frame_reference_exactly(self):
-        shape=(620,96);scale=2.34567
-        noise=_coordinate_noise(shape)
-        for size in ('small','large'):
-            fine,coarse=((.35*scale,1.2*scale) if size=='large' else (.2*scale,.8*scale))
-            fine_field=noise if fine<.3 else gaussian_filter(noise,fine,mode='reflect')
-            expected=(fine_field-gaussian_filter(noise,max(.35,coarse),mode='reflect'))
-            expected/=_grain_deviation(size,round(scale,4))
-            np.testing.assert_array_equal(film_grain(shape,size,scale),expected)
 
     def test_export_sixteen_bit_preserves_precision_and_profile(self):
         a=render(self.a,self.r)

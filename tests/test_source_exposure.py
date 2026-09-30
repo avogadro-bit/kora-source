@@ -8,6 +8,20 @@ from kora.studio import decode, _preview_source, _decode_sensor
 
 
 class SourceExposureTests(unittest.TestCase):
+    def test_q3_reference_color_applies_once_to_preview_and_full_decode(self):
+        metadata={'Make':'LEICA CAMERA AG','Model':'LEICA Q3 43','BaselineExposure':.25}
+        pixels=np.array([[[-.1,.2,2.],[.5,.8,.3]]],np.float32)
+        _preview_source.cache_clear()
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'fixture.dng';path.write_bytes(b'fixture')
+            with patch('kora.studio.exif',return_value=metadata), \
+                 patch('kora.studio._decode_sensor',side_effect=lambda *a,**kw:(pixels.copy(),None)):
+                preview=decode(path,preview=True);full=decode(path,preview=False)
+        expected=pixels*2**.25*np.array([1.0018982841,1.,.9798716044],np.float32)
+        np.testing.assert_allclose(preview,expected,atol=1e-7)
+        np.testing.assert_array_equal(preview,full)
+        _preview_source.cache_clear()
+
     def test_leica_float_input_uses_dng_baseline_and_preview_estimation(self):
         metadata={'Make':'LEICA CAMERA AG','Model':'LEICA M11','BaselineExposure':.25}
         profile=source_exposure(metadata,'.DNG')
@@ -67,7 +81,16 @@ class SourceExposureTests(unittest.TestCase):
                              ('classic_negative',-50,0,-50,0,400))
             self.assertEqual(recipe.color_chrome,'strong')
             self.assertEqual((recipe.wb,recipe.wb_red,recipe.wb_blue),('camera',0,0))
+            self.assertTrue(render.call_args.kwargs['context']['source_exposure_anchor'])
         _preview_source.cache_clear()
+
+    def test_exposure_anchor_retains_previous_highlight_response(self):
+        from kora.recipe_effects import linear_tone_curve
+        source=np.repeat(np.array([.08,.18,.5,1.,2.,4.,8.],np.float32)[None,:,None],3,-1)
+        expected=[.08,.18,.43054205,.66410637,1.0175209,1.5590107,2.3886626]
+        anchor=linear_tone_curve(source,highlights=-50,legacy_highlights=True)
+        np.testing.assert_allclose(anchor[0,:,0],expected,rtol=1e-6)
+        self.assertGreater(float(abs(anchor-linear_tone_curve(source,highlights=-50)).max()),.01)
 
     def test_fuji_capture_dr_is_independent_of_recipe(self):
         for dr,gain in [(100,1),(200,2),(400,4)]:

@@ -10,15 +10,24 @@ from pydantic import Field
 import rawpy
 from scipy.ndimage import gaussian_filter
 import tifffile
-from .input_profiles import RAW_EXTENSIONS, validate_linear_input, normalization_details
+from .input_profiles import RAW_EXTENSIONS, validate_linear_input, normalization_details, apply_input_color
 from .recipe import Recipe
+from .grain import apply_film_grain
+from .fuji_tone import apply_fuji_tone
+from .highlight_recovery import bayer_clipping, recover_camera_highlights
 from .raw import require_local, exif
 from .source_exposure import source_exposure, estimate_reference_ev
+from .source_white_balance import source_white_balance, fuji_shift
+from .camera_white_balance import apply_sensor_gains
 from .official_luts import FILMS as OFFICIAL_FILMS, apply_official, run_parallel_rows
-from .recipe_effects import wb_shift_gains, chrome_effect, dynamic_range_compress, linear_tone_curve, selective_tone_detail, preserve_film_hue, protect_unrecoverable_highlights
+from .recipe_effects import wb_shift_gains, chrome_effect, dynamic_range_compress, linear_tone_curve, selective_tone_detail, preserve_film_hue
 
 
 class StudioRecipe(Recipe):
+    highlight_tone: float = Field(default=0, ge=-2, le=4, multiple_of=.5)
+    shadow_tone: float = Field(default=0, ge=-2, le=4, multiple_of=.5)
+    highlights: float = Field(default=0, ge=-100, le=100)
+    whites: float = Field(default=0, ge=-100, le=100)
     target_model: Literal['X-T4', 'X100VI'] = 'X100VI'
     firmware_version: str = ''
     wb: Literal['camera','auto','auto_white','auto_ambience','daylight','shade','tungsten','fluorescent1','fluorescent2','fluorescent3','underwater','kelvin'] = 'camera'
@@ -46,11 +55,24 @@ def studio_status():
             'calibrated_against_fuji':False,'default_film':'provia',
             'official_lut_films':list(OFFICIAL_FILMS),
             'lut_source':'FUJIFILM GFX ETERNA 55 v1.10',
-            'photo_adapter_calibrated':False,'recipe_response_revision':13,
+            'photo_adapter_calibrated':False,'recipe_response_revision':24,
+            'tone_reference':{'camera':'X-M5','firmware':'1.20','film':'classic_negative',
+                'dynamic_range':100,'fit_scenes':2,'validation_scenes':3,
+                'controls':['highlight_tone','shadow_tone'],'range':[-2,4],'step':.5,
+                'scope':'all-supported-raw','intermediate_levels':'interpolated',
+                'joint_response_validated':False,'other_films_response_validated':False,
+                'exact_fuji_render':False},
             'lut_display_gamma':2.2,'raw_extensions':sorted(RAW_EXTENSIONS),
             'input_working_space':'linear sRGB / D65 / float32',
-            'wb_shift_source':'X-T4 2.12 DAT; adapted RGB application',
-            'chrome_reference':'public Fuji STRONG pairs + second-scene check'}
+            'wb_shift_source':'X-T4 2.12 coefficients; X-M5 sensor-space application checked',
+            'reference_film_scope':'all-supported-raw',
+            'reference_film_camera':'X-M5',
+            'reference_film_camera_equivalence':False,
+            'xm5_reference_validation':{'firmware':'1.20','scenes':5,'complete_camera_equivalence':False,
+                'parameters':['Auto WB','WB presets','R/B shift','grain','Color Chrome'],
+                'films':['pro_neg_hi','nostalgic_negative','classic_negative']},
+            'grain_reference':'X-M5 paired exports; statistical approximation',
+            'chrome_reference':'public Fuji pairs; X-M5 strength checked on five scenes'}
 
 
 def _resize_float_to(a,size,resample=Image.Resampling.LANCZOS):
@@ -66,30 +88,18 @@ def resize_float(a, edge):
     return _resize_float_to(a,size)
 
 
-def _decode_sensor(path, preview=True, floating_camera_rgb=False):
+def _decode_sensor(path, preview=True, floating_camera_rgb=False, *, user_wb=None):
     require_local(path)
     with rawpy.imread(str(path)) as raw:
         black=min(raw.black_level_per_channel)
         highlight_mask=None
         if floating_camera_rgb:
-            # Multiple clipped samples in a Bayer cell no longer provide a
-            # reliable colour. Neutralize only those sensor-clipped regions,
-            # not all bright scene-linear RGB. No invented highlight detail.
-            sensor=raw.raw_image_visible
-            if sensor.ndim!=2 or raw.raw_pattern.shape!=(2,2):
-                raise ValueError('Unsupported floating-point DNG sensor layout.')
-            h,w=sensor.shape;h-=h%2;w-=w%2
-            count=np.zeros((h//2,w//2),np.uint8)
-            for yy in (0,1):
-                for xx in (0,1):
-                    count+=(sensor[yy:h:2,xx:w:2]>=raw.white_level-32)
-            highlight_mask=(count>=2).astype(np.float32)
-            flip=raw.sizes.flip
-            if flip in (3,5,6):highlight_mask=np.rot90(highlight_mask,{3:2,5:1,6:3}[flip])
+            clipping,highlight_mask=bayer_clipping(raw,with_neutralization=True)
         # Reserve 3 stops inside LibRaw's integer processing BEFORE WB/RGB
         # conversion. Restore the scale in float, with no clip to display white.
         white=black+8*(raw.white_level-black)
-        a=raw.postprocess(use_camera_wb=True,use_auto_wb=False,no_auto_bright=True,
+        wb_options={'use_camera_wb':True} if user_wb is None else {'use_camera_wb':False,'user_wb':user_wb}
+        a=raw.postprocess(**wb_options,use_auto_wb=False,no_auto_bright=True,
             adjust_maximum_thr=0,user_sat=int(white),output_bps=16,gamma=(1,1),
             output_color=rawpy.ColorSpace.raw if floating_camera_rgb else rawpy.ColorSpace.sRGB,half_size=preview)
         if floating_camera_rgb:
@@ -101,9 +111,11 @@ def _decode_sensor(path, preview=True, floating_camera_rgb=False):
             if (a.shape[-1]!=3 or matrix.shape!=(3,4) or not np.isfinite(matrix).all()
                     or np.max(np.abs(matrix[:,:3]))<.01 or np.any(matrix[:,3]!=0)):
                 raise ValueError('Unsupported DNG color matrix; conversion stopped.')
-            a=np.einsum('...j,ij->...i',a.astype(np.float32),matrix[:,:3])
+            a=recover_camera_highlights(a.astype(np.float32),clipping)
+            a=np.einsum('...j,ij->...i',a,matrix[:,:3])
             mask=np.asarray(Image.fromarray(highlight_mask).resize((a.shape[1],a.shape[0]),Image.Resampling.BILINEAR))
-            # Feather the mask boundary; keep the luminance/RAW headroom.
+            # Smoothly reduce uncertain colour as the last channel saturates;
+            # retain luminance and RAW headroom, never manufacture texture.
             mask=gaussian_filter(mask,.6 if preview else 1.2)[:,:,None]
             y=np.sum(a*np.array([.2126,.7152,.0722],np.float32),-1,keepdims=True)
             a=a*(1-mask)+y*mask
@@ -127,27 +139,38 @@ def _decode_sensor(path, preview=True, floating_camera_rgb=False):
 def _preview_source(path,mtime,size):
     metadata=exif(path)
     info=source_exposure(metadata,path.suffix)
+    wb=source_white_balance(metadata,path.suffix)
     if info.get('floating_camera_rgb'):
         linear,reference=_decode_sensor(path,True,floating_camera_rgb=True)
+    elif wb['shift_removed']:
+        linear,reference=_decode_sensor(path,True,user_wb=wb['user_wb'])
     else:
         linear,reference=_decode_sensor(path,True)
     linear*=info['gain']
     match={'reference_ev':0.,'reference_matched':False,'reason':'No readable embedded preview'}
     if reference is not None:
-        # A fixed reference film per source, independent of the selected recipe.
-        # For other cameras PROVIA is only a neutral-ish adapter, not their JPEG engine.
-        # The embedded JPEG includes the capture's tone/color recipe. Omitting
-        # those settings makes the exposure estimate compensate for the wrong
-        # rendering. WB is already in decoded RGB; shooting_settings keeps its
-        # shifts at zero. This stays independent of the recipe being edited.
+        # Fit exposure against a separately decoded AS-SHOT reference. The
+        # shifted embedded JPEG must not change the neutral base's WB or make
+        # the exposure fit compensate for the removed colour cast.
+        anchor=linear
+        if wb['shift_removed']:
+            anchor,_=_decode_sensor(path,True)
+            anchor*=info['gain']
         settings={'film':'provia'}
-        if path.suffix.lower()=='.raf':settings.update(shooting_settings(metadata))
+        # Preserve the source-exposure anchor used by existing recipes. The
+        # new camera-style tone controls must not silently re-expose old RAWs.
+        if path.suffix.lower()=='.raf':settings.update(shooting_settings(metadata, legacy_tone=True))
         ref_recipe=StudioRecipe(**settings)
-        match=estimate_reference_ev(resize_float(linear,256),reference,lambda a:render(a,ref_recipe))
+        match=estimate_reference_ev(resize_float(anchor,256),reference,
+                                    lambda a:render(a,ref_recipe,context={'source_exposure_anchor':True}))
     info={**info,**match,'metadata_ev':info.get('baseline_ev',info['ev'])}
     info['ev']+=match['reference_ev'];info['gain']=2**info['ev']
     linear*=2**match['reference_ev']
+    # Keep the pair-derived colour refinement separate from preview exposure
+    # estimation, and apply it identically to preview and full-size decodes.
+    linear=apply_input_color(linear,info.get('input_profile'))
     linear=validate_linear_input(linear)
+    info['white_balance']=wb
     info['normalization']=normalization_details(metadata,path.suffix,info)
     linear.setflags(write=False)
     return linear,info
@@ -164,9 +187,11 @@ def decode(path, preview=True):
     if preview:return linear.copy()
     if info.get('floating_camera_rgb'):
         a,_=_decode_sensor(path,False,floating_camera_rgb=True)
+    elif info['white_balance']['shift_removed']:
+        a,_=_decode_sensor(path,False,user_wb=info['white_balance']['user_wb'])
     else:
         a,_=_decode_sensor(path,False)
-    return validate_linear_input(a*info['gain'])
+    return validate_linear_input(apply_input_color(a*info['gain'],info.get('input_profile')))
 
 
 def srgb_encode(a):
@@ -207,91 +232,6 @@ def large_radius_blur(a,radius):
     return _resize_float_to(small,(w,h),Image.Resampling.BILINEAR)
 
 
-def _coordinate_noise(shape, origin=(0,0)):
-    """Deterministic normal noise addressed by absolute image coordinates."""
-    x=np.arange(origin[1],origin[1]+shape[1],dtype=np.uint64)[None,:]
-    def uniform(y,seed):
-        value=x*np.uint64(0x9E3779B185EBCA87)^y*np.uint64(0xC2B2AE3D27D4EB4F)^np.uint64(seed)
-        value^=value>>np.uint64(30);value*=np.uint64(0xBF58476D1CE4E5B9)
-        value^=value>>np.uint64(27);value*=np.uint64(0x94D049BB133111EB)
-        value^=value>>np.uint64(31)
-        return ((value>>np.uint64(11)).astype(np.float64)+.5)*(1/2**53)
-    result=np.empty(shape,np.float32)
-    for start in range(0,shape[0],128):
-        stop=min(start+128,shape[0])
-        y=np.arange(origin[0]+start,origin[0]+stop,dtype=np.uint64)[:,None]
-        u=np.maximum(uniform(y,71821),1e-12);v=uniform(y,99173)
-        result[start:stop]=np.sqrt(-2*np.log(u))*np.cos(2*np.pi*v)
-    return result
-
-
-@lru_cache(maxsize=32)
-def _grain_deviation(size, scale):
-    noise=_coordinate_noise((768,768))
-    fine,coarse=((.35*scale,1.2*scale) if size=='large' else (.2*scale,.8*scale))
-    fine_field=noise if fine<.3 else gaussian_filter(noise,fine,mode='reflect')
-    return max(float((fine_field-gaussian_filter(noise,max(.35,coarse),mode='reflect')).std()),1e-5)
-
-
-def _grain_parameters(size,scale):
-    if size=='large':fine,coarse=.35*scale,1.2*scale
-    else:fine,coarse=.2*scale,.8*scale
-    return fine,max(.35,coarse)
-
-
-def _grain_rows(shape,size,scale,origin,start,stop,deviation):
-    """Generate one exact band of the deterministic full-frame grain field."""
-    fine,coarse=_grain_parameters(size,scale)
-    # scipy.ndimage's default Gaussian support is truncate=4.  Supplying that
-    # many real neighbouring rows makes an interior band identical to filtering
-    # one enormous full-frame noise buffer, without retaining that buffer.
-    halo=max(int(4*fine+.5),int(4*coarse+.5))
-    top=max(0,start-halo);bottom=min(shape[0],stop+halo)
-    noise=_coordinate_noise((bottom-top,shape[1]),(origin[0]+top,origin[1]))
-    fine_field=noise if fine<.3 else gaussian_filter(noise,fine,mode='reflect')
-    coarse_field=gaussian_filter(noise,coarse,mode='reflect')
-    offset=start-top
-    return (fine_field[offset:offset+stop-start]-
-            coarse_field[offset:offset+stop-start])/deviation
-
-
-def film_grain(shape, size, scale=1, origin=(0,0)):
-    """Deterministic monochrome band-pass texture in display-pixel units.
-
-    Fujifilm describes Roughness and Size as separate controls. The public
-    with/without example is dominated by luminance noise with slightly
-    negative adjacent-pixel correlation, so a blurred Gaussian field is the
-    wrong texture. This field removes a broader low-frequency component while
-    preserving a stable apparent scale across preview and full-size output.
-    """
-    scale=float(scale)
-    deviation=_grain_deviation(size,round(scale,4))
-    result=np.empty(shape,np.float32)
-    def process(start,stop):
-        result[start:stop]=_grain_rows(shape,size,scale,origin,start,stop,deviation)
-    run_parallel_rows(shape[0],process,block_rows=256)
-    return result
-
-
-def apply_film_grain(a,strength,size,scale=1,origin=(0,0)):
-    """Add deterministic grain in parallel without full-frame temporaries."""
-    scale=float(scale)
-    deviation=_grain_deviation(size,round(scale,4))
-    amount=.022 if strength=='weak' else .040
-    weights=np.array([.2126,.7152,.0722],np.float32)
-    shape=a.shape[:2]
-    def process(start,stop):
-        block=a[start:stop]
-        field=_grain_rows(shape,size,scale,origin,start,stop,deviation)
-        luminance=np.clip(np.sum(block*weights,axis=2),0,1)
-        # Fujifilm's public pair is close to constant-amplitude display noise,
-        # with only a modest reduction at the tonal extremes.
-        visibility=.72+.28*np.power(np.clip(4*luminance*(1-luminance),0,1),.3)
-        delta=field*amount*visibility
-        block[:,:,0]+=delta;block[:,:,1]+=delta;block[:,:,2]+=delta
-    run_parallel_rows(shape[0],process,block_rows=256)
-
-
 def _apply_legacy_film(a,film):
     """Apply one of the explicitly artistic, non-official display looks."""
     a=np.clip(srgb_encode(a),0,1)
@@ -309,7 +249,11 @@ def render(linear, r, neutral=False, *, output_transform=True, context=None, ori
     context=context or {}
     statistics=np.asarray(context.get('sample',a[::8,::8]),dtype=np.float32)
     if not neutral:
-        if r.wb.startswith('auto'):
+        native_gains=context.get('camera_wb_gains',{}).get(r.wb)
+        sensor_matrix=context.get('camera_to_srgb')
+        if native_gains is not None:
+            gains=np.asarray(native_gains,dtype=np.float32)
+        elif r.wb.startswith('auto'):
             means=np.mean(statistics,axis=(0,1))+1e-5
             strength={'auto':.65,'auto_white':1.,'auto_ambience':.3}[r.wb]
             gains=np.clip((means.mean()/means)**strength,.5,2)
@@ -318,9 +262,19 @@ def render(linear, r, neutral=False, *, output_transform=True, context=None, ori
             temp={'daylight':5500,'shade':7500,'tungsten':3200,'fluorescent1':6500,'fluorescent2':5000,'fluorescent3':4000,'underwater':8500}.get(r.wb,r.kelvin if r.wb=='kelvin' else 5500)
             t=np.log(temp/5500)
             gains=np.array([np.exp(.5*t),1,np.exp(-.65*t)],np.float32)
-        gains=gains*wb_shift_gains(r.wb_red,r.wb_blue)*2**r.exposure
-        a*=gains
-        adjusted_statistics=statistics*gains
+        shifts=wb_shift_gains(r.wb_red,r.wb_blue)
+        if sensor_matrix is not None:
+            # Relative artistic modes stay in working RGB; a recorded Auto
+            # estimate and R/B fine tuning belong to camera RGB instead.
+            if native_gains is None:
+                a*=gains;statistics=statistics*gains
+                gains=np.ones(3,dtype=np.float32)
+            a=apply_sensor_gains(a,gains*shifts,sensor_matrix)*2**r.exposure
+            adjusted_statistics=apply_sensor_gains(statistics,gains*shifts,sensor_matrix)*2**r.exposure
+        else:
+            gains=gains*shifts*2**r.exposure
+            a*=gains
+            adjusted_statistics=statistics*gains
         dr=r.dynamic_range
         if r.dr_priority!='off':
             # D-range priority takes over both DR and manual tone controls.
@@ -334,14 +288,26 @@ def render(linear, r, neutral=False, *, output_transform=True, context=None, ori
         color_input=a
         stabilize_color=any((highlights,whites,shadows,blacks)) or dr!=100
         a=linear_tone_curve(a,highlights=highlights,whites=whites,
-                            shadows=shadows,blacks=blacks)
+                            shadows=shadows,blacks=blacks,
+                            detail_scale=max(context.get('full_shape',a.shape)[:2])/1800,
+                            legacy_highlights=context.get('source_exposure_anchor',False))
         a=dynamic_range_compress(a,dr)
-    if neutral:return np.clip(srgb_encode(a),0,1)
+    if neutral:
+        a=np.clip(srgb_encode(a),0,1)
+        return transform_output(a,r) if output_transform else a
     official=r.film in OFFICIAL_FILMS
-    protect_highlights=(highlights<0 or whites<0) and bool(
-        context.get('protect_neutral_clipped_highlights'))
+    # All RAW decoders supply the same linear sRGB/D65 working space.
+    # Film adaptations use that space; camera-specific WB stays upstream.
+    reference_film=r.film in ('pro_neg_hi','nostalgic_negative','classic_negative')
     film_reference=None
-    if official:
+    if reference_film:
+        from .xm5_film import apply_reference_film
+        a=apply_reference_film(a,r.film)
+        if stabilize_color:
+            film_reference=apply_reference_film(color_input,r.film)
+            a=preserve_film_hue(film_reference,a)
+        sat=1.
+    elif official:
         if r.film=='acros' and r.mono_filter!='none':
             # Artistic prefilter; the official pack only supplies plain ACROS.
             gains={'red':[1.5,.8,.4],'yellow':[1.2,1.1,.5],
@@ -351,28 +317,28 @@ def render(linear, r, neutral=False, *, output_transform=True, context=None, ori
         a=apply_official(a,r.film)
         if stabilize_color:
             # Tone changes can move hue inside a 3D film LUT. Keep the film's
-            # original hue while taking gradation from the adjusted RAW branch.
+            # hue where reliable, using recovered colour near the film shoulder.
             film_reference=apply_official(color_input,r.film)
             a=preserve_film_hue(film_reference,a)
         sat=1.
     else:
         # Legacy artistic looks are explicitly identified in the GUI.
         a,sat=_apply_legacy_film(a,r.film)
-        if protect_highlights:
-            film_reference,_=_apply_legacy_film(color_input,r.film)
-    if protect_highlights and film_reference is not None:
-        a=protect_unrecoverable_highlights(a,film_reference,linear)
-        film_reference=None
     if shadows>0 or blacks>0:
         # Restore shadow texture; highlight recovery remains a smooth point
         # transform to avoid bright/dark rims around cloud boundaries.
         a=selective_tone_detail(color_input,a,highlights=highlights,whites=whites,
                                 shadows=shadows,blacks=blacks)
+    if r.dr_priority=='off':
+        a=apply_fuji_tone(a,r.highlight_tone,r.shadow_tone)
     saturation=sat*(1+r.color*.085)
     if saturation!=1:
         y=np.sum(a*np.array([.2126,.7152,.0722],np.float32),axis=2)
         a=y[:,:,None]+(a-y[:,:,None])*saturation
-    if r.color_chrome!='off':a=chrome_effect(a,r.color_chrome)
+    if r.color_chrome!='off':
+        # Apply the reference-derived strength in the common display space.
+        # This is an artistic adaptation, not a calibration of other cameras.
+        a=chrome_effect(a,r.color_chrome,strength_scale=.437)
     if r.fx_blue!='off':a=chrome_effect(a,r.fx_blue,blue_only=True)
     if r.film in ['acros','monochrome','sepia']:
         weights={'none':[.2126,.7152,.0722],'red':[.55,.4,.05],'yellow':[.35,.6,.05],'green':[.12,.82,.06]}[r.mono_filter]
@@ -396,9 +362,15 @@ def render(linear, r, neutral=False, *, output_transform=True, context=None, ori
     if r.sharpness:
         base=blur(a,max(.5,.75*scale));base*=-1;base+=a;base*=r.sharpness*.12;a+=base
     if r.grain!='off':
-        apply_film_grain(a,r.grain,r.grain_size,scale,origin)
+        apply_film_grain(a,r.grain,r.grain_size,
+                         max(context.get('full_shape',a.shape)[:2])/6000,origin)
     np.clip(a,0,1,out=a)
     if not output_transform:return a
+    return transform_output(a,r)
+
+
+def transform_output(a,r):
+    """Share crop/size geometry between the recipe and its RAW-base comparison."""
     h,w=a.shape[:2]
     cw,ch=int(w/r.digital_crop),int(h/r.digital_crop)
     if r.aspect!='original':
@@ -411,7 +383,7 @@ def render(linear, r, neutral=False, *, output_transform=True, context=None, ori
     return a
 
 
-def encode(a,r,preview=False):
+def encode(a,r,preview=False,*,detail=False):
     icc=ImageCms.ImageCmsProfile(ImageCms.createProfile('sRGB')).tobytes()
     if r.color_space=='adobe_rgb' and not preview:
         from .platform_support import adobe_rgb_profile
@@ -424,23 +396,34 @@ def encode(a,r,preview=False):
     buf=BytesIO()
     if preview or r.file_type=='jpeg':
         im=Image.fromarray(np.round(a*255).astype(np.uint8))
-        im.save(buf,'JPEG',quality=90 if preview else (96 if r.image_quality=='fine' else 82),icc_profile=icc,
+        im.save(buf,'JPEG',quality=(96 if detail else 90) if preview else (96 if r.image_quality=='fine' else 82),
+            subsampling=0 if preview and detail else -1,icc_profile=icc,
             comment=('KŌRA: '+('official GFX ETERNA 55 LUT; uncalibrated photo adapter' if r.film in OFFICIAL_FILMS else 'independent artistic look')).encode())
         return buf.getvalue(),'image/jpeg'
     dtype=np.uint16 if r.file_type=='tiff16' else np.uint8
     maximum=65535 if r.file_type=='tiff16' else 255
     tifffile.imwrite(buf,np.round(a*maximum).astype(dtype),photometric='rgb',metadata=None,
-        description=json.dumps({'renderer':'official-lut-photo-adapter-v1','recipe_response_revision':13,'official_lut':r.film if r.film in OFFICIAL_FILMS else None,'exact_fuji_render':False,'recipe':r.model_dump()}),
+        description=json.dumps({'renderer':'official-lut-photo-adapter-v1','recipe_response_revision':24,'official_lut':r.film if r.film in OFFICIAL_FILMS else None,'exact_fuji_render':False,'recipe':r.model_dump()}),
         extratags=[(34675,'B',len(icc),icc,False)])
     return buf.getvalue(),'image/tiff'
 
 
-def shooting_settings(meta):
-    """Import only unambiguous EXIF settings; WB is already applied by LibRaw."""
+def shooting_settings(meta, *, restore_wb_shift=False, legacy_tone=False):
+    """Restore R/B only when the decoder removed them from this source."""
     import re
     values={'name':'File Settings (Partial)','wb':'camera','wb_red':0,'wb_blue':0}
+    if not legacy_tone:
+        values.update(highlight_tone=0,shadow_tone=0,highlights=0,whites=0,shadows=0,blacks=0)
+    if restore_wb_shift and (shift:=fuji_shift(meta)) is not None:
+        values.update(wb_red=shift[0],wb_blue=shift[1])
     films={'classic negative':'classic_negative','classic chrome':'classic_chrome','provia':'provia','velvia':'velvia','astia':'astia','eterna':'eterna','eterna bleach bypass':'eterna_bleach','reala ace':'reala_ace','nostalgic neg.':'nostalgic_negative','pro neg. std':'pro_neg_std','pro neg. hi':'pro_neg_hi'}
-    film=str(meta.get('FilmMode','')).lower()
+    # ExifTool's FujiFilm PrintConv uses these full MakerNote labels. A
+    # missing match also biases the embedded-preview exposure estimate.
+    films.update({'f0/standard (provia)':'provia',
+                  'f1b/studio portrait smooth skin tone (astia)':'astia',
+                  'f2/fujichrome (velvia)':'velvia','f4/velvia':'velvia',
+                  'bleach bypass':'eterna_bleach','nostalgic neg':'nostalgic_negative'})
+    film=str(meta.get('FilmMode','')).strip().lower()
     if film in films:values['film']=films[film]
     # ACROS/monochrome and its filter are encoded in Saturation, not FilmMode.
     mono=str(meta.get('Saturation','')).lower()
@@ -451,8 +434,9 @@ def shooting_settings(meta):
         text=str(meta.get(tag,''));match=re.match(r'^([+-]?\d+(?:\.\d+)?)',text)
         if match:
             v=float(match[1])
-            if key=='highlights':v=round(v*25)
-            elif key=='shadows':v=round(v*-25)
+            if key in ('highlights','shadows'):
+                if legacy_tone:v=round(v*(25 if key=='highlights' else -25))
+                else:key='highlight_tone' if key=='highlights' else 'shadow_tone'
             candidate={**values,key:v}
             try:StudioRecipe(**candidate)
             except ValueError:continue

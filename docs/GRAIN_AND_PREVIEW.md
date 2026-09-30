@@ -1,5 +1,8 @@
 # Grain calibration and DR preview artifacts
 
+Historical measurements and implementation notes. See [X-M5 measurements](XM5_CALIBRATION.md) for the 0.2.27 grain update. The current grain revision
+is documented in [Grain 0.2.23](GRAIN_0.2.23.md).
+
 The studio's grain remains an independent approximation. Fujifilm documents
 `ROUGHNESS` (`WEAK`/`STRONG`) and `SIZE` (`SMALL`/`LARGE`) as separate controls,
 and describes the effect as a controlled amount of random noise:

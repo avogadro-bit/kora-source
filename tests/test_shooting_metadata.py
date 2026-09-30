@@ -11,6 +11,17 @@ from kora.studio import shooting_settings,StudioRecipe
 
 
 class ShootingMetadataTests(unittest.TestCase):
+    def test_exiftool_full_film_names(self):
+        labels={'F0/Standard (Provia)':'provia',
+                'F1b/Studio Portrait Smooth Skin Tone (Astia)':'astia',
+                'F2/Fujichrome (Velvia)':'velvia', 'F4/Velvia':'velvia',
+                'Bleach Bypass':'eterna_bleach', 'Nostalgic Neg':'nostalgic_negative'}
+        for label,film in labels.items():
+            with self.subTest(label=label):
+                self.assertEqual(shooting_settings({'FilmMode':label})['film'],film)
+        # Historical S-series portrait modes have no proven modern equivalent.
+        self.assertNotIn('film',shooting_settings({'FilmMode':'F1/Studio Portrait'}))
+
     def test_dng_profile_survives_missing_exiftool(self):
         with TemporaryDirectory() as directory:
             path = Path(directory) / 'camera.dng'
@@ -41,4 +52,5 @@ class ShootingMetadataTests(unittest.TestCase):
     def test_capture_wb_shift_is_not_applied_twice(self):
         r=StudioRecipe(**shooting_settings({'WhiteBalanceFineTune':'Red +40, Blue -80','WhiteBalance':'Kelvin','Saturation':'+4 (highest)','HighlightTone':'-2 (soft)','ShadowTone':-.5}))
         self.assertEqual((r.wb,r.wb_red,r.wb_blue),('camera',0,0))
-        self.assertEqual((r.color,r.highlights,r.whites,r.shadows,r.blacks),(4,-50,0,12,0))
+        self.assertEqual((r.color,r.highlight_tone,r.shadow_tone),(4,-2,-.5))
+        self.assertEqual((r.highlights,r.whites,r.shadows,r.blacks),(0,0,0,0))

@@ -6,6 +6,7 @@ WEAK: half the STRONG response, not measured independently.
 See docs/PARAMETER_AUDIT.md and research/reference-effects/chrome-fit.json.
 """
 import json
+from functools import lru_cache
 from pathlib import Path
 import numpy as np
 from PIL import Image
@@ -20,9 +21,9 @@ def wb_shift_gains(red,blue):
                      WB_TABLE['blue_q10'][blue+9]],np.float32)/1024
 
 
-def chrome_effect(a,setting,blue_only=False):
+def chrome_effect(a,setting,blue_only=False,*,strength_scale=1.):
     if setting=='off':return a
-    strength={'weak':.5,'strong':1.}[setting]
+    strength={'weak':.5,'strong':1.}[setting]*strength_scale
     result=np.empty_like(a)
     def process(start,stop):
         source=a[start:stop]
@@ -112,56 +113,84 @@ def _smoothstep(value):
     return value*value*(3-2*value)
 
 
-def _unrecoverable_highlight_weight(source):
-    """A broad, continuous highlight shoulder for floating DNG input.
+@lru_cache(maxsize=64)
+def _highlight_curve(highlights, whites, legacy=False):
+    """Integrate positive contrast on the ORIGINAL exposure axis.
 
-    RGB neutrality is not evidence of clipping: a cloud's color can cross a
-    neutrality threshold while its brightness is continuous. The former narrow
-    chroma mask produced white islands in otherwise recovered clouds. A smooth
-    luminance-only shoulder preserves gradation and applies equally to nearby
-    neutral and tinted pixels. This is a tone policy, not a sensor-clipping mask.
+    Both controls select their input zone before compression. Negative edits
+    compress a bounded transition, then recover contrast in the bright tail:
+    the old permanent 1/16 slope flattened entire skies at combined minima.
+    A positive contrast floor prevents reversals even with opposite settings.
     """
-    weights=np.array([.2126,.7152,.0722],np.float32)
-    y=np.sum(source*weights,axis=-1)
-    return _smoothstep((y-.8)/1.2)
+    axis=np.linspace(0,32,4097,dtype=np.float64)
+    def amount(value):
+        t=abs(value)/100
+        return .4*t+.6*t*t
+    high_zone=_smoothstep(axis/2)
+    white_zone=_smoothstep((axis-1.75)/1.)
+    if legacy:
+        # Freeze the pre-0.2.32 exposure-fit anchor for embedded RAF recipes.
+        # This branch is never selected by the user's editing controls.
+        slope=np.exp2(((-2 if highlights<0 else .9)*amount(highlights))*high_zone
+                      +((-2 if whites<0 else 1.2)*amount(whites))*white_zone)
+        mapped=np.concatenate(([0.],np.cumsum((slope[:-1]+slope[1:])*.5*np.diff(axis))))
+        axis.setflags(write=False);mapped.setflags(write=False)
+        return axis,mapped,float(slope[-1])
+    high_window=high_zone*(1-_smoothstep((axis-2)/3))
+    white_window=white_zone*(1-_smoothstep((axis-3)/2.5))
+    reduction=(.75*amount(min(highlights,0))*high_window
+               +amount(min(whites,0))*white_window)
+    slope=(.18+.82*np.exp2(-4*reduction))*np.exp2(
+        .9*amount(max(highlights,0))*high_zone
+        +1.2*amount(max(whites,0))*white_zone)
+    mapped=np.concatenate(([0.],np.cumsum((slope[:-1]+slope[1:])*.5*np.diff(axis))))
+    axis.setflags(write=False);mapped.setflags(write=False)
+    return axis,mapped,float(slope[-1])
 
 
-def protect_unrecoverable_highlights(adjusted,reference,source):
-    """Blend the bright DNG shoulder smoothly toward the baseline film rendering."""
-    def process(start,stop):
-        weight=_unrecoverable_highlight_weight(source[start:stop])[...,None]
-        adjusted[start:stop]*=1-weight
-        adjusted[start:stop]+=reference[start:stop]*weight
-    run_parallel_rows(len(adjusted),process)
-    return adjusted
+def _map_highlights(ev, highlights, whites, legacy=False):
+    if highlights==0 and whites==0:return ev
+    axis,mapped,last_slope=_highlight_curve(highlights,whites,legacy)
+    result=np.interp(ev,axis,mapped).astype(np.float32)
+    return np.where(ev<=0,ev,np.where(ev>axis[-1],mapped[-1]+(ev-axis[-1])*last_slope,result))
 
 
-def linear_tone_curve(a, highlights=0, shadows=0, whites=0, blacks=0):
+def linear_tone_curve(a, highlights=0, shadows=0, whites=0, blacks=0, *, detail_scale=0, legacy_highlights=False):
     """Four-way, exposure-domain tonal adjustment before film clipping.
 
     Values follow common photo-editor directions on a -100..100 scale:
     negative Highlights/Whites recover bright tones, while positive
-    Shadows/Blacks open dark tones. The four monotonic log-luminance tails
-    overlap smoothly without clipping HDR values or changing RGB ratios.
+    Shadows/Blacks open dark tones. Highlights and Whites independently shape
+    positive log-luminance contrast on the original exposure axis. Smooth
+    overlapping ranges retain HDR gradation and RGB ratios.
     This is an independent Capture One-like model, not Capture One code.
     """
     if highlights == 0 and whites == 0 and shadows == 0 and blacks == 0:
         return a
     result=np.empty_like(a)
+    radius=min(64,max(2,round(8*detail_scale))) if detail_scale>0 and min(highlights,whites)<0 else 0
     def process(start,stop):
-        source=a[start:stop]
+        lo=max(0,start-2*radius);hi=min(len(a),stop+2*radius)
+        source=a[lo:hi]
         y=np.sum(source*np.array([.2126,.7152,.0722],np.float32),axis=-1)
         valid=y>1e-12
         ev=np.log2(np.maximum(y,1e-12)/.18)
-        # Narrow endpoint controls first, then the broader tonal controls.
+        # Shadow controls retain their existing exposure-domain response.
         ev=_tone_tail(ev,-2.5,-1.55*blacks/100,False)
         ev=_tone_tail(ev,0,-1.35*shadows/100,False)
-        ev=_tone_tail(ev,0,1.25*highlights/100,True)
-        ev=_tone_tail(ev,2,1.85*whites/100,True)
+        mapped=_map_highlights(ev,highlights,whites,legacy_highlights)
+        if radius:
+            # Compress the edge-aware base before the film transform, retaining
+            # fine RAW detail. Small epsilon protects high-contrast boundaries;
+            # a quarter-stop limit prevents broad local halos at extreme edits.
+            base=_guided_base(ev,radius,epsilon=.015)
+            detail_target=_map_highlights(base,highlights,whites,legacy_highlights)+(ev-base)
+            mapped+=np.clip(detail_target-mapped,-.25,.25)*_smoothstep(ev/1.75)
+        ev=mapped
         target=.18*np.exp2(np.clip(ev,-60,60))
         scale=np.ones_like(y)
         np.divide(target,y,out=scale,where=valid)
-        result[start:stop]=source*scale[...,None]
+        result[start:stop]=(source*scale[...,None])[start-lo:stop-lo]
     run_parallel_rows(len(a),process)
     return result
 
@@ -242,7 +271,8 @@ def selective_tone_detail(original, adjusted, highlights=0, shadows=0, whites=0,
 def preserve_film_hue(reference, adjusted):
     """Use RAW-adjusted luminance with the reference film's RGB hue direction.
 
-    The second rendering retains recovered RAW gradation. Chroma is scaled
+    Near the reference film's white shoulder, use recovered colour instead:
+    the baseline rendering has lost chroma there. Elsewhere chroma is scaled
     with luminance and reduced at the gamut boundary, never channel-clipped.
     This is an independent color-stability policy, not Fuji's algorithm.
     """
@@ -256,6 +286,9 @@ def preserve_film_hue(reference, adjusted):
         gain=target/np.maximum(y,1e-8)
         gain=np.minimum(gain,target/np.maximum(y-ref.min(-1),1e-8))
         gain=np.minimum(gain,(1-target)/np.maximum(ref.max(-1)-y,1e-8))
-        np.clip(target[...,None]+gain[...,None]*chroma,0,1,out=result[start:stop])
+        stable=target[...,None]+gain[...,None]*chroma
+        recovered_weight=_smoothstep((ref.max(-1)-.85)/.15)[...,None]
+        np.clip(stable*(1-recovered_weight)+adj*recovered_weight,0,1,
+                out=result[start:stop])
     run_parallel_rows(len(reference),process)
     return result

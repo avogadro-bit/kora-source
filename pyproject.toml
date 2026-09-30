@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kora"
-version = "0.2.21"
+version = "0.2.33"
 description = "Local multi-camera RAW studio with an independent Fujifilm LUT adapter"
 readme = "README.md"
 license = "MIT"
