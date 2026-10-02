@@ -20,6 +20,17 @@ La release macOS intègre Python, rawpy/LibRaw, NumPy, SciPy, Pillow, Pydantic, 
 
 ## Code original
 
-La release macOS embarque lensfunpy et la base Lensfun sans modification. La bibliothèque Lensfun est sous LGPL 3.0 et sa base sous CC BY-SA 3.0, avec attribution aux contributeurs Lensfun. Les coefficients DNG Leica sont lus à la demande dans les photos de l’utilisateur. L’implémentation géométrique se réfère à la [spécification DNG Adobe](https://helpx.adobe.com/camera-raw/digital-negative.html) et l’intégration des profils à la [documentation lensfunpy](https://letmaik.github.io/lensfunpy/).
+La release embarque lensfunpy et la bibliothèque Lensfun sous LGPL 3.0. À partir
+de 0.2.35, `kora/lensfun_db/` contient une copie sans modification des fichiers
+XML de la [base officielle Lensfun, format 1](https://lensfun.github.io/db/),
+sous **CC BY-SA 3.0**, avec attribution au projet Lensfun et à ses contributeurs.
+La licence complète et le manifeste `origin.json` (date et SHA-256 de l'archive)
+accompagnent les données dans le dépôt, le wheel, l'archive source et les apps.
+Les commentaires XML conservent les attributions individuelles présentes.
+Cette base remplace à l'exécution celle, plus ancienne, livrée avec lensfunpy.
+Les modèles ACM, réservés au format 2, ne sont pas dans cette base compatible.
+Les coefficients DNG Leica sont lus à la demande dans les photos de l’utilisateur.
+L’implémentation géométrique se réfère à la [spécification DNG Adobe](https://helpx.adobe.com/camera-raw/digital-negative.html)
+et l’intégration des profils à la [documentation lensfunpy](https://letmaik.github.io/lensfunpy/).
 
 Le code original est distribué sous [licence MIT](LICENSE). Cette licence ne remplace pas celles des ressources tierces. Ce document fournit l’inventaire des ressources ; il ne constitue pas une validation juridique des droits de distribution.

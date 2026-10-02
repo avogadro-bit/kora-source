@@ -1,9 +1,10 @@
 include README.md HISTORY.md THIRD_PARTY.md LICENSE
-recursive-include docs *.md
+recursive-include docs *.md *.json
 recursive-include scripts *.py *.swift
 recursive-include packaging *.spec *.svg
 recursive-include kora/static *.html *.js *.css
 recursive-include kora/luts *.json
+recursive-include kora/lensfun_db *.xml *.json COPYING*
 recursive-include tests *.py *.cjs
 prune research
 prune outputs

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kora"
-version = "0.2.33"
+version = "0.2.35"
 description = "Local multi-camera RAW studio with an independent Fujifilm LUT adapter"
 readme = "README.md"
 license = "MIT"
@@ -21,7 +21,7 @@ release = ["pyinstaller>=6.22,<7", "pyobjc-framework-Cocoa>=11,<13; sys_platform
 kora = "kora.__main__:main"
 
 [tool.setuptools.package-data]
-kora = ["static/*", "luts/*.json"]
+kora = ["static/*", "luts/*.json", "lensfun_db/*.xml", "lensfun_db/*.json", "lensfun_db/COPYING*"]
 
 [tool.setuptools.packages.find]
 include = ["kora*"]

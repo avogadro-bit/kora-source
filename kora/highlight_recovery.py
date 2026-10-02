@@ -14,6 +14,54 @@ def _resize(a, size):
     return np.asarray(Image.fromarray(a).resize(size, Image.Resampling.BILINEAR))
 
 
+def clipped_neutral_mask(raw, white_balance=None):
+    """Fade unreliable chroma in sensor-clipped, near-neutral Bayer highlights.
+
+    Balance the surviving sensels before deciding how close to white they
+    are: a neutral surface does not have equal unbalanced sensor values.
+    Unsupported layouts retain their decoder's existing behaviour.
+    """
+    sensor=raw.raw_image_visible
+    pattern=raw.raw_pattern
+    if (sensor.ndim!=2 or pattern is None or pattern.shape!=(2,2)
+            or raw.color_desc!=b'RGBG'
+            or not set(pattern.ravel()).issubset({0,1,2,3})
+            or not {0,1,2}.issubset(set(pattern.ravel()))):
+        return None
+    wb=np.array(raw.camera_whitebalance if white_balance is None else white_balance,dtype=np.float32)
+    if wb.shape!=(4,) or not np.isfinite(wb).all() or np.any(wb[:3]<=0):return None
+    if wb[3]<=0:wb[3]=wb[1]
+    wb/=wb.min()
+    h,w=sensor.shape;h-=h%2;w-=w%2
+    lowest=np.full((h//2,w//2),np.inf,np.float32)
+    clipped=np.zeros_like(lowest)
+    for yy in (0,1):
+        for xx in (0,1):
+            index=int(pattern[yy,xx]);black=raw.black_level_per_channel[index]
+            if raw.white_level<=black:return None
+            level=(sensor[yy:h:2,xx:w:2].astype(np.float32)-black)/(raw.white_level-black)
+            np.minimum(lowest,level*wb[index],out=lowest)
+            weight=np.clip((level-.94)/.06,0,1)
+            np.maximum(clipped,weight*weight*(3-2*weight),out=clipped)
+    neutral=np.clip((lowest-.6)/.4,0,1)
+    neutral=neutral*neutral*(3-2*neutral)*clipped
+    if raw.sizes.flip in (3,5,6):neutral=np.rot90(neutral,{3:2,5:1,6:3}[raw.sizes.flip])
+    return neutral
+
+
+def neutralize_clipped_rgb(rgb, mask, *, preview):
+    """Suppress uncertain colour without clipping luminance or RAW headroom."""
+    if mask is None or not np.any(mask):return rgb
+    mask=gaussian_filter(_resize(mask,(rgb.shape[1],rgb.shape[0])),.6 if preview else 1.2)
+    result=rgb.astype(np.float32,copy=True)
+    # Bound temporary memory on 100+ MP files.
+    for start in range(0,len(result),128):
+        row=result[start:start+128];weight=mask[start:start+128,:,None]
+        y=np.sum(row*np.array([.2126,.7152,.0722],np.float32),-1,keepdims=True)
+        row+=weight*(y-row)
+    return result
+
+
 def bayer_clipping(raw, *, with_neutralization=False):
     sensor=raw.raw_image_visible
     pattern=raw.raw_pattern

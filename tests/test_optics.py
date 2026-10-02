@@ -1,4 +1,5 @@
 import struct
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 import numpy as np
@@ -11,6 +12,42 @@ def opcode(coeff=(1,0,0,0,0,0),center=(.5,.5)):
 
 
 class OpticsTests(unittest.TestCase):
+    def test_recent_database_and_resolved_lens_names(self):
+        db=database()
+        if db is None:self.skipTest('Optional optics dependency absent')
+        self.assertGreaterEqual(len(db.lenses),1569)
+        self.assertGreaterEqual(len(db.cameras),1057)
+        samples=[
+            ({'Make':'FUJIFILM','Model':'X-M5','LensModel':'XC15-45mmF3.5-5.6 OIS PZ'},'XC15-45mmF3.5-5.6 OIS PZ'),
+            ({'Make':'Canon','Model':'Canon EOS R5','LensModel':'50mm F1.4 DG HSM | Art 014','LensID':'Sigma 50mm f/1.4 DG HSM | A'},'Sigma 50mm f/1.4 DG HSM [A]'),
+            ({'Make':'FUJIFILM','Model':'X100VI','LensModel':'23.0 mm f/2.0'},'X100V & compatibles'),
+            ({'Make':'NIKON CORPORATION','Model':'COOLPIX P1000'},'Coolpix P1000 & compatibles'),
+            ({'Make':'SONY','Model':'ILCE-7M4','LensModel':'FE 50mm F2.5 G'},'FE 50mm f/2.5 G')]
+        for meta,expected in samples:
+            with self.subTest(meta=meta):
+                match=lensfun_match(meta);self.assertIsNotNone(match);self.assertEqual(match[1].model,expected)
+
+    def test_ambiguous_id_numeric_id_and_unprofiled_lenses_are_not_guessed(self):
+        if database() is None:self.skipTest('Optional optics dependency absent')
+        for meta in (
+            {'Make':'Canon','Model':'Canon EOS 5D Mark IV','LensModel':'24-70mm','LensID':'Sigma 24-70mm f/2.8 IF EX DG HSM or Tamron SP 24-70mm f/2.8 Di VC USD'},
+            {'Make':'Canon','Model':'Canon EOS R5','LensID':368},
+            {'Make':'Hasselblad','Model':'X2D 100C','LensModel':'XCD 38V'},
+            {'Make':'FUJIFILM','Model':'GFX 50S','LensModel':'GF63mmF2.8 R WR'},
+            {'Make':'FUJIFILM','Model':'X-M5','LensModel':'Unidentified'},
+        ):
+            with self.subTest(meta=meta):self.assertIsNone(lensfun_match(meta))
+
+    def test_multiple_calibrations_require_same_identity_and_unique_crop_match(self):
+        from kora.optics import _best_calibration
+        camera=SimpleNamespace(crop_factor=1.5)
+        wide=SimpleNamespace(maker='Test',model='Test 24mm f/2',crop_factor=1.)
+        crop=SimpleNamespace(maker='Test',model='Test 24mm f/2',crop_factor=1.5)
+        other=SimpleNamespace(maker='Test',model='Test 24mm f/2 II',crop_factor=1.5)
+        self.assertIs(_best_calibration([wide,crop],camera),crop)
+        self.assertIsNone(_best_calibration([crop,other],camera))
+        self.assertIsNone(_best_calibration([crop,crop],camera))
+
     def test_regional_dng_correction_matches_full_frame_and_sparse_statistics(self):
         from kora.optics import dng_corrected_region
         source=np.random.default_rng(8).uniform(-.2,4,(83,117,3)).astype(np.float32)

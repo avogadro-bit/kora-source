@@ -68,10 +68,21 @@ class PrefetchRequest(BaseModel):
     id: str = Field(min_length=1, max_length=64)
 
 STATIC = Path(__file__).with_name("static")
-MAX_UPLOAD = 200*1024*1024
+# 100 MP 3FR originals can exceed 200 MiB. Imports are streamed to disk.
+MAX_UPLOAD = 512*1024*1024
 MAX_LUT_ARCHIVE = 160*1024*1024
 MAX_BATCH_REQUEST = 512*1024
 MAX_RECIPE_SIZE = 64*1024
+
+
+def unsupported_raw_message(metadata):
+    compression=str(metadata.get('NEFCompression','')).casefold()
+    if str(metadata.get('Make','')).upper().startswith('NIKON') and 'high efficiency' in compression:
+        return ('Nikon High Efficiency (HE/HE*) RAW is not supported by this version. '
+                'Use a lossless-compressed or uncompressed NEF, or convert this file '
+                'to DNG with a compatible RAW converter.')
+    return ('This RAW camera or compression is not supported by the current decoder. '
+            'Try a DNG conversion with a compatible RAW converter.')
 
 
 def host_capacity(cpu_count=None, physical_memory=None):
@@ -365,7 +376,11 @@ class Library:
             path = Path(item["path"])
             info = {**item, "exif": exif(path), "preview_available": False,
                     "preview_kind": "embedded", "recipe_applied": False, "exact_fuji_render": False}
-            with rawpy.imread(str(path)) as raw:
+            try:
+                raw = rawpy.imread(str(path))
+            except rawpy.LibRawFileUnsupportedError as exc:
+                raise ValueError(unsupported_raw_message(info['exif'])) from exc
+            with raw:
                 info["sizes"] = raw.sizes._asdict()
                 width,height=raw.sizes.width,raw.sizes.height
                 if raw.sizes.flip in (5,6):width,height=height,width
@@ -385,7 +400,12 @@ class Library:
                 except (rawpy.LibRawNoThumbnailError, rawpy.LibRawUnsupportedThumbnailError):
                     info["preview_reason"] = "This file has no readable embedded preview."
             from .studio import source_details
-            info["source_exposure"] = source_details(path)
+            try:
+                info["source_exposure"] = source_details(path)
+            except rawpy.LibRawFileUnsupportedError as exc:
+                # Some decoders can read metadata/thumbnail, then reject the
+                # sensor compression only when development starts.
+                raise ValueError(unsupported_raw_message(info['exif'])) from exc
             info["input_normalization"] = info["source_exposure"].get("normalization",{})
             info["shooting_settings"] = shooting_settings(info["exif"],restore_wb_shift=info.get("source_exposure",{}).get("white_balance",{}).get("shift_removed",False))
             from .optics import inspect_optics
@@ -806,7 +826,7 @@ class Handler(BaseHTTPRequestHandler):
                      MAX_LUT_ARCHIVE if route.path == "/api/luts/install" else
                      MAX_BATCH_REQUEST if route.path == "/api/export-batch" else 65536)
             if not 0 < length <= limit:
-                maximum = ("200 MB" if route.path == "/api/import" else
+                maximum = (f"{MAX_UPLOAD//1024//1024} MiB" if route.path == "/api/import" else
                            "160 MB" if route.path == "/api/luts/install" else
                            "512 KB" if route.path == "/api/export-batch" else "64 KB")
                 return self.send(413, {"error": f"File too large or empty request (maximum: {maximum})."})

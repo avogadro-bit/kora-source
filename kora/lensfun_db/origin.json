@@ -1,0 +1,10 @@
+{
+  "upstream": "https://lensfun.github.io/db/",
+  "timestamp": 1790258417,
+  "archive_url": "https://lensfun.github.io/db/version_1.tar.bz2",
+  "sha256": "d0a0e70fde53c7b214b4c66dfd68af3bca123f3ea1cf7d72b01f5c0f720b7bea",
+  "format_version": 1,
+  "license": "CC-BY-SA-3.0",
+  "attribution": "Lensfun project and contributors; see XML comments.",
+  "notes": "Official version 1 database; ACM calibrations require a newer Lensfun engine and are not included."
+}

@@ -1,10 +1,51 @@
 import unittest
 from types import SimpleNamespace
 import numpy as np
-from kora.highlight_recovery import bayer_clipping, recover_camera_highlights
+from kora.highlight_recovery import (bayer_clipping, recover_camera_highlights,
+                                     clipped_neutral_mask, neutralize_clipped_rgb)
 
 
 class HighlightRecoveryTests(unittest.TestCase):
+    def test_balanced_clipped_white_is_neutral_but_saturated_colour_survives(self):
+        raw=SimpleNamespace(raw_image_visible=np.array([[5000,10000],[10000,6667]],np.uint16),
+            raw_pattern=np.array([[0,1],[3,2]]),color_desc=b'RGBG',
+            camera_whitebalance=[2,1,1.5,1],black_level_per_channel=[0]*4,
+            white_level=10000,sizes=SimpleNamespace(flip=0))
+        self.assertAlmostEqual(float(clipped_neutral_mask(raw)[0,0]),1)
+        # Clipped red with a low blue channel is a colour, not a white patch.
+        raw.raw_image_visible[:]=[[10000,4000],[4000,100]]
+        np.testing.assert_array_equal(clipped_neutral_mask(raw),0)
+        # Bright but intact white must also retain its measured colour.
+        raw.raw_image_visible[:]=[[4500,9000],[9000,6000]]
+        np.testing.assert_array_equal(clipped_neutral_mask(raw),0)
+
+    def test_neutralization_preserves_luminance_headroom_and_source(self):
+        rgb=np.full((12,24,3),[6,2,5],np.float32);before=rgb.copy()
+        mask=np.ones((6,12),np.float32)
+        out=neutralize_clipped_rgb(rgb,mask,preview=True)
+        np.testing.assert_allclose(out[...,0],out[...,1],atol=1e-6)
+        np.testing.assert_allclose(out[...,1],out[...,2],atol=1e-6)
+        weights=np.array([.2126,.7152,.0722],np.float32)
+        np.testing.assert_allclose(out@weights,rgb@weights,atol=1e-6)
+        self.assertGreater(float(out.min()),1)
+        np.testing.assert_array_equal(rgb,before)
+        for empty in (None,np.zeros_like(mask)):
+            np.testing.assert_array_equal(neutralize_clipped_rgb(rgb,empty,preview=True),rgb)
+
+    def test_generic_mask_skips_non_bayer_and_handles_rotation_and_user_wb(self):
+        raw=SimpleNamespace(raw_image_visible=np.tile([[5000,10000],[10000,6667]],(2,3)).astype(np.uint16),
+            raw_pattern=np.array([[0,1],[3,2]]),color_desc=b'RGBG',
+            camera_whitebalance=[2,1,1.5,0],black_level_per_channel=[0]*4,
+            white_level=10000,sizes=SimpleNamespace(flip=6))
+        self.assertEqual(clipped_neutral_mask(raw).shape,(3,2))
+        np.testing.assert_array_equal(clipped_neutral_mask(raw),1)
+        np.testing.assert_array_equal(clipped_neutral_mask(raw,[1,1,1,1]),0)
+        self.assertIsNone(clipped_neutral_mask(raw,[float('nan'),1,1,1]))
+        raw.raw_pattern=np.zeros((6,6),int)
+        self.assertIsNone(clipped_neutral_mask(raw))
+        raw.raw_pattern=None
+        self.assertIsNone(clipped_neutral_mask(raw))
+
     def test_donors_with_another_clipped_channel_cannot_tint_recovery(self):
         camera=np.empty((96,160,3),np.float32);camera[:]=[16000,12000,16000]
         mask=np.zeros_like(camera);mask[...,2]=1

@@ -27,4 +27,4 @@ jobs:
           node-version: '22'
       - run: node --check kora/static/app.js
       - run: node --check kora/static/viewer.js
-      - run: node --test tests/test_connection.cjs tests/test_diagnostics_js.cjs tests/test_film_choices_js.cjs tests/test_viewer.cjs
+      - run: node --test tests/test_connection.cjs tests/test_diagnostics_js.cjs tests/test_film_choices_js.cjs tests/test_viewer.cjs tests/test_optics_js.cjs

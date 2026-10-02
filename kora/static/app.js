@@ -173,6 +173,7 @@ function setupControls(){
  slider(s,"Monochromatic Color · warm / cool","mono_warm",-18,18);slider(s,"Monochromatic Color · green / magenta","mono_green",-18,18);
  select(s,"Smooth Skin Effect","smooth_skin",effect);
  s=section("LENS CORRECTIONS");select(s,"Lens Distortion","lens_distortion",[["off","Off"],["auto","Automatic Profile"]]);select(s,"Lens Vignetting","lens_vignetting",[["off","Off"],["auto","Automatic Profile"]]);const opticalNote=element("p","Choose a photo to identify its lens.");opticalNote.id="optics-status";opticalNote.setAttribute("role","status");s.append(opticalNote);
+ const opticalApply=element("button","Apply available corrections");opticalApply.id="optics-apply";opticalApply.type="button";opticalApply.hidden=true;opticalApply.addEventListener("click",applyAvailableOptics);s.append(opticalApply);
  s=section("CROP & OUTPUT");select(s,"File Type","file_type",[["jpeg","JPEG"],["tiff8","TIFF · 8-bit"],["tiff16","TIFF · 16-bit"]]);
  select(s,"Image Size","image_size",[["L","L · full developed resolution"],["M","M · 50% of the pixels"],["S","S · 25% of the pixels"]]);
  select(s,"Image Aspect","aspect",[["original","Original"],["3:2","3:2"],["16:9","16:9"],["1:1","1:1"],["4:3","4:3"]]);
@@ -724,7 +725,22 @@ initializeFolderTree();
 
 function updateOpticsStatus(){
  const note=$("#optics-status");if(!note)return;
+ const button=$("#optics-apply"),available=Boolean(selected&&opticsInfo&&(opticsInfo.distortion||opticsInfo.vignetting));
+ if(button){button.hidden=!available;button.disabled=!available||!Object.keys(availableOpticsPatch(opticsInfo,recipe)).length;button.textContent=button.disabled?"Available corrections applied":"Apply available corrections";}
  if(!opticsInfo){note.textContent="Choose a photo to identify its lens.";return;}
- const state=(key,available)=>recipe?.[key]==="auto"?(available?"enabled":"unavailable · not applied"):"off";
- note.textContent=opticsInfo.label+". Distortion: "+state("lens_distortion",opticsInfo.distortion)+". Vignetting: "+state("lens_vignetting",opticsInfo.vignetting)+".";
+ const state=(key,available)=>!available?"no profile":recipe?.[key]==="auto"?"enabled":"available · off";
+ const identified=opticsInfo.lens_name&&opticsInfo.source!=="lensfun"?"Detected lens: "+opticsInfo.lens_name+". ":"";
+ note.textContent=identified+opticsInfo.label+". Distortion: "+state("lens_distortion",opticsInfo.distortion)+". Vignetting: "+state("lens_vignetting",opticsInfo.vignetting)+".";
+}
+function availableOpticsPatch(profile,current){
+ const patch={};
+ for(const [capability,key] of [["distortion","lens_distortion"],["vignetting","lens_vignetting"]]){
+  if(profile?.[capability]&&current?.[key]!=="auto")patch[key]="auto";
+ }
+ return patch;
+}
+function applyAvailableOptics(){
+ if(!selected||!opticsInfo)return;
+ const patch=availableOpticsPatch(opticsInfo,recipe);if(!Object.keys(patch).length)return;
+ recordUndo();applyPatchToSelection(patch);populate();persist();scheduleRender(0);
 }

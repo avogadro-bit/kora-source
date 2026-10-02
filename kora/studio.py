@@ -14,7 +14,8 @@ from .input_profiles import RAW_EXTENSIONS, validate_linear_input, normalization
 from .recipe import Recipe
 from .grain import apply_film_grain
 from .fuji_tone import apply_fuji_tone
-from .highlight_recovery import bayer_clipping, recover_camera_highlights
+from .highlight_recovery import (bayer_clipping, recover_camera_highlights,
+                                 clipped_neutral_mask, neutralize_clipped_rgb)
 from .raw import require_local, exif
 from .source_exposure import source_exposure, estimate_reference_ev
 from .source_white_balance import source_white_balance, fuji_shift
@@ -95,6 +96,8 @@ def _decode_sensor(path, preview=True, floating_camera_rgb=False, *, user_wb=Non
         highlight_mask=None
         if floating_camera_rgb:
             clipping,highlight_mask=bayer_clipping(raw,with_neutralization=True)
+        else:
+            highlight_mask=clipped_neutral_mask(raw,user_wb)
         # Reserve 3 stops inside LibRaw's integer processing BEFORE WB/RGB
         # conversion. Restore the scale in float, with no clip to display white.
         white=black+8*(raw.white_level-black)
@@ -119,6 +122,8 @@ def _decode_sensor(path, preview=True, floating_camera_rgb=False, *, user_wb=Non
             mask=gaussian_filter(mask,.6 if preview else 1.2)[:,:,None]
             y=np.sum(a*np.array([.2126,.7152,.0722],np.float32),-1,keepdims=True)
             a=a*(1-mask)+y*mask
+        else:
+            a=neutralize_clipped_rgb(a,highlight_mask,preview=preview)
         reference=None
         if preview:
             try:

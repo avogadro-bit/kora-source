@@ -9,7 +9,7 @@ from kora.compatibility import MAC_BUNDLE_ID
 project_root = Path(SPEC).resolve().parent.parent
 datas = collect_data_files(
     "kora",
-    includes=["static/*", "luts/*.json"],
+    includes=["static/*", "luts/*.json", "lensfun_db/*"],
 )
 datas += [
     (str(project_root / "LICENSE"), "."),

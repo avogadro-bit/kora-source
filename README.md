@@ -46,7 +46,15 @@ On Windows, use `py -3 -m venv .venv`, then `.venv\Scripts\Activate.ps1` in Powe
 
 Install **ExifTool** and make it available on `PATH`: [official website](https://exiftool.org/). On macOS with Homebrew, run `brew install exiftool`. Without ExifTool, metadata and some input profiles are unavailable and rendering can differ.
 
-For Lensfun profiles, run `python -m pip install -e '.[optics]'`. Embedded Leica DNG corrections do not require Lensfun. In the GUI, open **Lens Corrections**, then select **Automatic Profile** for distortion and/or vignetting. The status text reports which corrections are available. Both controls are off by default. See [coverage and validation](docs/OPTICS_AND_NORMALIZATION.md).
+The desktop app includes **1,569 Lensfun profiles** (database dated 24 September
+2026). Source installations need `python -m pip install -e '.[optics]'`.
+KŌRA identifies the lens when you open a RAW and offers **Apply available
+corrections** in **Lens Corrections** whenever a matching calibration exists.
+Distortion and vignetting can also be enabled separately using **Automatic
+Profile**. Both remain off until chosen, and existing recipes are respected.
+Embedded Leica DNG corrections do not require Lensfun. Unidentified or ambiguous
+lenses are left uncorrected. See [current coverage](docs/OPTICS_0.2.35.md) and
+[the original validation](docs/OPTICS_AND_NORMALIZATION.md).
 
 ### Official LUTs
 

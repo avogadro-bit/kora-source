@@ -111,8 +111,6 @@ def main():
         'mpdecimal': Path('/opt/homebrew/opt/mpdecimal/COPYRIGHT.txt'),
     } if sys.platform == 'darwin' else {'Python': Path(sys.base_prefix) / 'LICENSE.txt'}
     for name, source in runtime_licenses.items():
-        if name == 'Python' and sys.platform == 'darwin':
-            source = Path('/opt/homebrew/Cellar/python@3.14/3.14.6/LICENSE')
         target = DEST / 'runtime' / name / source.name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
@@ -122,7 +120,11 @@ def main():
         target = DEST / name
         subprocess.run(['curl', '-fL', '--retry', '2', '--silent', '--show-error', url, '-o', str(target)], check=True)
         shutil.copyfile(target, SOURCES/name)
-    manifest = {'python': sys.version.split()[0], 'packages': packages, 'native_sources': sources}
+    lens_database = ROOT / 'kora' / 'lensfun_db'
+    for destination in (DEST, SOURCES):
+        shutil.copytree(lens_database, destination/'lensfun-database', dirs_exist_ok=True)
+    manifest = {'python': sys.version.split()[0], 'packages': packages, 'native_sources': sources,
+                'lens_database': json.loads((lens_database/'origin.json').read_text())}
     (DEST/'inventory.json').write_text(json.dumps(manifest, indent=2)+'\n')
     (SOURCES/'inventory.json').write_text(json.dumps(manifest, indent=2)+'\n')
     shutil.copyfile(ROOT/'docs'/'DEPENDENCY_NOTICES.md', DEST/'README.md')

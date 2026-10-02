@@ -8,8 +8,10 @@ from a similar camera/lens; no second automatic correction of linear DNGs.
 from functools import lru_cache
 import json
 from pathlib import Path
+import re
 import struct
 import subprocess
+import xml.etree.ElementTree as ET
 import numpy as np
 from scipy.ndimage import map_coordinates
 from .official_luts import run_parallel_rows
@@ -111,21 +113,71 @@ def dng_corrected_region(linear,profile,box,step=1):
 def database():
     try:import lensfunpy
     except ImportError:return None
-    return lensfunpy.Database(load_common=False)
+    # Ship one reproducible, current database on every platform. Do not mix
+    # duplicate calibrations from the older wheel or a user's system database.
+    paths=sorted(Path(__file__).with_name('lensfun_db').glob('*.xml'))
+    if not paths:raise RuntimeError('The bundled lens profile database is missing. Reinstall KŌRA.')
+    return lensfunpy.Database(paths=[str(p) for p in paths],load_common=False,load_bundled=False)
+
+
+@lru_cache(maxsize=1)
+def fixed_lens_mounts():
+    # Lensfun assigns private mounts to fixed-lens camera families. Limit the
+    # no-lens-name fallback to its compact-camera catalog, never an ILC mount
+    # that happens to have only one calibrated lens in the database.
+    mounts=set()
+    for path in Path(__file__).with_name('lensfun_db').glob('compact-*.xml'):
+        mounts.update(c.findtext('mount') for c in ET.parse(path).getroot().findall('camera'))
+    for path in Path(__file__).with_name('lensfun_db').glob('*.xml'):
+        if path.name.startswith('compact-'):continue
+        mounts.difference_update(c.findtext('mount') for c in ET.parse(path).getroot().findall('camera'))
+    return mounts-{None}
+
+
+def _named_lens(value):
+    if not isinstance(value,str):return None
+    value=value.strip()
+    if (not re.search('[a-zA-Z]',value) or re.fullmatch(r'[\d.\s-]+mm',value,re.I)
+            or re.search(r'\b(or|unknown|unidentified)\b',value,re.I)
+            or value.casefold() in ('n/a','none','not available')):return None
+    return value
+
+
+def _best_calibration(lenses,camera):
+    if len(lenses)==1:return lenses[0]
+    if not lenses:return None
+    # The same optical model may have separate full-frame and APS-C profiles.
+    # Choose the nearest calibration crop only when lens identity agrees.
+    if len({(l.maker,l.model) for l in lenses})!=1:return None
+    ordered=sorted(lenses,key=lambda l:abs(l.crop_factor-camera.crop_factor))
+    if abs(ordered[0].crop_factor-camera.crop_factor)+1e-5<abs(ordered[1].crop_factor-camera.crop_factor):
+        return ordered[0]
+    return None
 
 
 def lensfun_match(metadata):
     db=database()
     if db is None:return None
     make=str(metadata.get('Make','')).strip();model=str(metadata.get('Model','')).strip()
-    # LensID may be a numeric manufacturer ID: only use it when it is a name.
-    name=metadata.get('LensModel') or metadata.get('LensID') or metadata.get('LensType')
-    if not isinstance(name,str) or not make or not model:return None
+    if not make or not model:return None
     cameras=db.find_cameras(make,model,loose_search=False)
+    if not cameras and make.casefold()=='hasselblad' and model=='Hasselblad X1DM2-50c':
+        cameras=db.find_cameras(make,'X1D II 50C',loose_search=False)
     if len(cameras)!=1:return None
-    lenses=db.find_lenses(cameras[0],lens=name.strip(),loose_search=False)
-    if len(lenses)!=1:return None
-    return cameras[0],lenses[0]
+    camera=cameras[0]
+    # ExifTool's resolved LensID can identify a Sigma/Tamron lens where the
+    # literal LensModel only contains a focal range or a different spelling.
+    # An ambiguous ID ("... or ...") is never split into guessed candidates.
+    for key in ('LensModel','LensID','LensType'):
+        name=_named_lens(metadata.get(key))
+        if name is None:continue
+        lens=_best_calibration(db.find_lenses(camera,lens=name,loose_search=False),camera)
+        if lens is not None:return camera,lens
+    if camera.mount in fixed_lens_mounts():
+        lenses=[lens for lens in db.find_lenses(camera) if camera.mount in lens.mounts]
+        lens=_best_calibration(lenses,camera)
+        if lens is not None:return camera,lens
+    return None
 
 
 def _number(value,default=0.):
@@ -139,12 +191,14 @@ def _inspect(path,mtime,size):
     base={'distortion':False,'vignetting':False,'source':'none','label':'No lens profile identified','orientation':1}
     executable = find_exiftool()
     if not executable:return {**base,'label':'ExifTool missing: lens profile unavailable'}
-    tags=['Make','Model','LensModel','LensID','LensType','FocalLength','FNumber','Orientation',
-          'PhotometricInterpretation','Software','OpcodeList3','DefaultScale']
-    result=subprocess.run([executable,'-j','-n',*['-'+t for t in tags],str(path)],capture_output=True,text=True,check=True,timeout=20)
+    # Keep resolved lens names, while retaining numeric geometry/exposure tags.
+    tags=['Make','Model','LensModel','LensID','LensType','LensMake','FocalLength#','FNumber#','Orientation#',
+          'PhotometricInterpretation#','Software','OpcodeList3','DefaultScale#']
+    result=subprocess.run([executable,'-j',*['-'+t for t in tags],str(path)],capture_output=True,text=True,check=True,timeout=20)
     metadata=json.loads(result.stdout)[0];metadata.pop('SourceFile',None)
     orientation=int(_number(metadata.get('Orientation'),1))
-    base.update(metadata=metadata,orientation=orientation)
+    base.update(metadata=metadata,orientation=orientation,
+                lens_name=_named_lens(metadata.get('LensModel')) or _named_lens(metadata.get('LensID')) or '')
     if orientation not in (1,3,6,8):return {**base,'label':'Mirrored orientation: lens correction unavailable'}
     if path.suffix.lower()=='.dng':
         # Conservative: only native, mosaiced Leica files with understood stage3
@@ -170,6 +224,7 @@ def _inspect(path,mtime,size):
     distortion=lens.interpolate_distortion(focal) is not None
     vignetting=aperture>0 and lens.interpolate_vignetting(focal,aperture,1000.) is not None
     return {**base,'source':'lensfun','label':'Lensfun · '+lens.model,
+            'lens_name':lens.model,'camera_name':cam.model,
             'distortion':distortion,'vignetting':vignetting,'focal':focal,'aperture':aperture,
             'focus_distance_m':1000.,'focus_distance_estimated':True}
 

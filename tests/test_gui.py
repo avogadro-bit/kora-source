@@ -572,6 +572,7 @@ class GuiServerTests(unittest.TestCase):
         self.assertEqual([p.name for p in Path(self.scratch.name).iterdir()], ['errors.jsonl'])
 
     def test_import_is_confined_to_generated_directory(self):
+        from kora.gui import MAX_UPLOAD
         self.assertEqual(self.request("/api/import?name=photo.jpg", "POST", "not-raw")[0], 415)
         code, data = self.request("/api/import?name=..%2F..%2Fexample.RAF", "POST", "synthetic-unit-test")
         self.assertEqual(code, 201)
@@ -579,7 +580,7 @@ class GuiServerTests(unittest.TestCase):
         self.assertTrue(path.is_relative_to(Path(self.scratch.name).resolve()))
         self.assertEqual(path.name, "example.RAF")
         self.assertEqual(path.read_text(), "synthetic-unit-test")
-        self.assertEqual(self.request("/api/import?name=large.RAF", "POST", "", {"Content-Length": str(201*1024*1024)})[0], 413)
+        self.assertEqual(self.request("/api/import?name=large.RAF", "POST", "", {"Content-Length": str(MAX_UPLOAD+1)})[0], 413)
 
     def test_lut_archive_is_verified_locally_then_deleted(self):
         from unittest.mock import patch
@@ -630,6 +631,64 @@ class GuiServerTests(unittest.TestCase):
         self.assertEqual(len(list(root.rglob("*"))),4)
         self.assertEqual(self.request("/api/folder","POST",json.dumps({"path":str(root),"recursive":"false"}))[0],422)
         self.assertEqual(self.request("/api/folders?path="+quote(str(root)),headers={"X-Fuji-Session":"wrong"})[0],403)
+
+    def test_raw_import_streams_data_and_rejects_an_oversized_body_before_reading(self):
+        from kora.gui import MAX_UPLOAD
+        payload=bytes(range(256))*8192+b'RAW end'
+        code,item=self.request('/api/import?name=medium-format.3FR','POST',payload)
+        self.assertEqual(code,201)
+        self.assertEqual(Path(item['path']).read_bytes(),payload)
+        self.assertEqual(item['format'],'3FR')
+        count=len(self.server.library.files)
+        code,error=self.request('/api/import?name=too-large.3FR','POST',b'',
+                                {'Content-Length':str(MAX_UPLOAD+1)})
+        self.assertEqual(code,413)
+        self.assertIn('MiB',error['error'])
+        self.assertEqual(len(self.server.library.files),count)
+
+    def test_unsupported_nikon_compression_has_actionable_error(self):
+        from unittest.mock import patch
+        import rawpy
+        path=Path(self.scratch.name)/'unsupported.NEF';path.write_bytes(b'fixture')
+        item=self.server.library.add(path)
+        for compression in ('High Efficiency','High Efficiency*'):
+            with self.subTest(compression=compression), \
+                 patch('kora.gui.exif',return_value={'Make':'NIKON CORPORATION','Model':'NIKON Z 8','NEFCompression':compression}), \
+                 patch('kora.gui.rawpy.imread',side_effect=rawpy.LibRawFileUnsupportedError('Unsupported')):
+                code,error=self.request('/api/photo/'+item['id'])
+                self.assertEqual(code,422)
+                self.assertIn('HE/HE*',error['error'])
+                self.assertIn('lossless-compressed',error['error'])
+                self.assertIn('DNG',error['error'])
+                self.assertNotIn('b\'',error['error'])
+
+    def test_unsupported_raw_without_metadata_does_not_guess_nikon(self):
+        from unittest.mock import patch
+        import rawpy
+        path=Path(self.scratch.name)/'unsupported.ARW';path.write_bytes(b'fixture')
+        item=self.server.library.add(path)
+        with patch('kora.gui.exif',return_value={'metadata_available':False}), \
+             patch('kora.gui.rawpy.imread',side_effect=rawpy.LibRawFileUnsupportedError('Unsupported')):
+            code,error=self.request('/api/photo/'+item['id'])
+        self.assertEqual(code,422)
+        self.assertIn('not supported',error['error'])
+        self.assertNotIn('Nikon',error['error'])
+
+    def test_unsupported_compression_reported_when_metadata_opens_but_development_fails(self):
+        from unittest.mock import patch,MagicMock
+        import rawpy
+        path=Path(self.scratch.name)/'unsupported.NEF';path.write_bytes(b'fixture')
+        item=self.server.library.add(path)
+        raw=MagicMock();raw.__enter__.return_value=raw
+        raw.sizes.width=100;raw.sizes.height=80;raw.sizes.flip=0
+        raw.sizes._asdict.return_value={'width':100,'height':80,'flip':0}
+        raw.extract_thumb.side_effect=rawpy.LibRawNoThumbnailError('No thumbnail')
+        with patch('kora.gui.exif',return_value={'Make':'NIKON','NEFCompression':'High Efficiency'}), \
+             patch('kora.gui.rawpy.imread',return_value=raw), \
+             patch('kora.studio.source_details',side_effect=rawpy.LibRawFileUnsupportedError('Unsupported')):
+            code,error=self.request('/api/photo/'+item['id'])
+        self.assertEqual(code,422)
+        self.assertIn('HE/HE*',error['error'])
 
     @unittest.skipIf(missing_luts(), "Official LUT integration: install Fuji assets separately")
     def test_render_endpoint_applies_recipe_to_cached_raw_pixels(self):

@@ -2,6 +2,22 @@
 
 Ces notes décrivent les étapes antérieures ; suivre README.md pour installer la version actuelle.
 
+## 0.2.35 — Profils optiques et reconnaissance des objectifs
+
+Base Lensfun du 24 septembre 2026 intégrée : 1 569 profils et 1 057 boîtiers,
+soit 265 profils et 109 boîtiers supplémentaires. Lecture des identifiants
+d'objectifs résolus, reconnaissance des objectifs intégrés et proposition des
+corrections disponibles en un clic. Les correspondances ambiguës restent
+sans correction. [Couverture et vérification](docs/OPTICS_0.2.35.md).
+
+## 0.2.34 — Tests RAW multimarques et hautes lumières saturées
+
+Campagne sur 21 fichiers Sony, Nikon, Canon, Hasselblad et Fujifilm, couvrant
+12 modèles et huit extensions. Correction des dominantes roses dans les
+hautes lumières saturées de l'entrée Bayer générique. Import porté à 512 Mio
+pour les RAW moyen format ; message explicite pour les Nikon HE/HE* non pris
+en charge. [Matrice, méthode et limites](docs/MULTICAMERA_0.2.34.md).
+
 ## 0.2.33 — Affichage détaillé en vue entière et sur Retina
 
 La vue entière charge désormais les détails du RAW après le premier aperçu,
