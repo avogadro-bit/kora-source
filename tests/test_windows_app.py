@@ -1,3 +1,4 @@
+import io
 import tempfile
 import threading
 import unittest
@@ -5,10 +6,22 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from kora import windows_app, platform_support, desktop, diagnostics, official_luts, raw
+from kora import windows_app, platform_support, desktop, diagnostics, official_luts, raw, gui
 
 
 class WindowsLifecycleTests(unittest.TestCase):
+    def test_legacy_console_encoding_does_not_prevent_server_startup(self):
+        server = Mock(server_port=8765)
+        ready = Mock()
+        with io.TextIOWrapper(io.BytesIO(), encoding='cp1252') as output, \
+                patch('sys.stdout', output), patch.object(gui, 'install_hooks'), \
+                patch.object(gui, 'bind_studio_server', return_value=server), \
+                patch.object(gui, 'Library'):
+            gui.serve([], on_ready=ready)
+        ready.assert_called_once()
+        server.serve_forever.assert_called_once()
+        server.server_close.assert_called_once()
+
     def run_window(self, failure=None):
         stopped = threading.Event()
         server = Mock()

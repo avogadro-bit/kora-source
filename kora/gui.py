@@ -1060,7 +1060,9 @@ def serve(roots, port=8765, open_browser=False, on_ready=None):
         session_url = f"http://127.0.0.1:{server.server_port}/#session={server.session_token}"
         if server.server_port != port:
             print(f"Port {port} is already in use. Opening on available port {server.server_port}.", flush=True)
-        print(f"KŌRA : {session_url}", flush=True)
+        # Windows GUI launchers can expose a legacy cp1252 output stream.
+        # Keep the startup banner ASCII so logging cannot prevent startup.
+        print(f"KORA : {session_url}", flush=True)
         print("Local service. Press Ctrl+C to quit. Temporary imports are removed at shutdown.", flush=True)
         if open_browser:
             # Defer browser launch until serve_forever has started accepting requests.
