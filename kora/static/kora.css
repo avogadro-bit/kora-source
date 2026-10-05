@@ -45,18 +45,19 @@ input,select{background:#171a18;border:1px solid var(--line);padding:6px 7px}
 label input:not([type=range]),label select{margin-top:5px}
 .recipe-name-label{font-size:8px;text-transform:uppercase;letter-spacing:1.4px;color:#747e70}
 .recipe-name-label input{background:transparent;border:0;border-bottom:1px solid var(--line);border-radius:0;padding:8px 0;font-size:12px;letter-spacing:.15px;color:#c0c8b9}
-.film-card{background:transparent;border:0;border-radius:0;margin:20px 0 10px;padding:0}
-.film-card label{color:#747e70;font-size:8px;letter-spacing:1.5px}
-.film-card select{background:transparent;color:#bdc6b6;font-size:12px;padding:6px 0;border:0}
-.film-card p{font-size:9px;color:#687360;line-height:1.5;margin:4px 0}
+.film-card{background:#1b211c;border:1px solid #9aa99366;border-radius:6px;margin:20px 0 14px;padding:12px}
+.film-card:focus-within{border-color:#9aa993b3}
+.film-card label{color:#b5bfad;font-size:9px;font-weight:600;letter-spacing:1.35px}
+.film-card select{background:#111612;color:#d5ddce;font-size:12px;font-weight:500;padding:8px 7px;border:1px solid #9aa99338}
+.film-card p{font-size:9px;color:#8f9b85;line-height:1.5;margin:8px 0 0}
 .recipe-notice{display:none}
 .studio-actions{gap:3px;margin:13px 0}
 .studio-actions button{font-size:9px;padding:5px 6px;border-color:transparent;color:#8a9581}
 .studio-actions #shooting{flex-basis:100%;text-align:left;padding-left:0;font-size:9px}
 .preset-row{gap:6px;margin:0 0 15px}.preset-row select{font-size:10px;background:transparent;border-color:var(--line)}
 .preset-row button{font-size:9px;padding:5px 7px;background:transparent;color:#8e9985}
-.control-section{border-top:1px solid var(--line);margin-top:20px;padding-top:18px}
-.control-section h3{font-size:8px;letter-spacing:1.7px;font-weight:500;color:#8e9984;margin:0 0 18px}
+.control-section{border-top:1px solid #cdd2c626;margin-top:22px;padding-top:12px}
+.control-section h3{font-size:9px;line-height:1.4;letter-spacing:1.35px;font-weight:600;color:#b5bfad;margin:0 0 16px;padding:7px 9px;background:#9aa9930f;border-left:2px solid #9aa9936b;border-radius:0 3px 3px 0}
 .range-row{margin:17px 0}.range-row output{font-family:ui-monospace,"SFMono-Regular",Menlo,monospace;font-size:10px;font-variant-numeric:tabular-nums;color:#a8b09f}
 .select-grid{gap:12px}.select-grid select{font-size:10px}
 input[type=range]{appearance:none;-webkit-appearance:none;background:transparent;border:0;height:18px;margin:7px 0 0;padding:0}

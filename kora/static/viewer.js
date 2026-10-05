@@ -6,6 +6,7 @@
  "use strict";
  function density(value){return Number.isFinite(value)&&value>0?value:1;}
  function scaleForZoom(zoom,dpr){return zoom/density(dpr);}
+ function clampZoom(zoom,fit){return Math.max(fit,Math.min(4,Number.isFinite(zoom)?zoom:fit));}
  function planTiles({width,height,viewportWidth,viewportHeight,scale,panX=0,panY=0,dpr=1,size=768}){
   if(!width||!height||!viewportWidth||!viewportHeight||!(scale>0))return {tiles:[],visible:[],level:1};
   // Never stretch a reduced tile over more physical pixels than it contains.
@@ -55,5 +56,5 @@
    this.state?.();
   }
  }
- return {density,scaleForZoom,planTiles,DetailQueue};
+ return {density,scaleForZoom,clampZoom,planTiles,DetailQueue};
 });

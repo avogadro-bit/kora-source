@@ -1,7 +1,18 @@
 const {test}=require('node:test'),assert=require('node:assert/strict');
-const {planTiles,scaleForZoom,DetailQueue}=require('../kora/static/viewer.js');
+const {planTiles,scaleForZoom,clampZoom,DetailQueue}=require('../kora/static/viewer.js');
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 const frame={width:9536,height:6344,viewportWidth:1512,viewportHeight:1000,size:768};
+
+test('zoom stops at Fit for every screen density and caps at 400 percent',()=>{
+ for(const dpr of [1,1.25,2,3]){
+  const fit=Math.min(frame.viewportWidth/frame.width,frame.viewportHeight/frame.height,1/dpr)*dpr;
+  for(const requested of [-1,0,.02,fit/1.25,NaN])assert.equal(clampZoom(requested,fit),fit);
+  assert.equal(clampZoom(fit*1.25,fit),fit*1.25);
+  assert.equal(clampZoom(10,fit),4);
+  let zoom=1;for(let i=0;i<100;i++)zoom=clampZoom(zoom/1.25,fit);
+  assert.equal(zoom,fit);
+ }
+});
 
 test('Fit covers the whole photo with enough samples for Retina, including fractional density',()=>{
  const scale=Math.min(frame.viewportWidth/frame.width,frame.viewportHeight/frame.height);

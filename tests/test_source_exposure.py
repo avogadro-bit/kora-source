@@ -8,6 +8,28 @@ from kora.studio import decode, _preview_source, _decode_sensor
 
 
 class SourceExposureTests(unittest.TestCase):
+    def test_parallel_dng_conversion_preserves_whole_frame_arithmetic(self):
+        from PIL import Image
+        from scipy.ndimage import gaussian_filter
+        rng=np.random.default_rng(12)
+        sensor=rng.integers(0,22000,(777,603,3),dtype=np.uint16)
+        matrix=np.array([[1.3,-.2,-.1,0],[-.1,1.2,-.1,0],[0,-.2,1.2,0]],np.float32)
+        mask=rng.uniform(0,1,(389,302)).astype(np.float32)
+        raw=MagicMock();raw.__enter__.return_value=raw
+        raw.white_level=16383;raw.black_level_per_channel=[512]*4
+        raw.postprocess.return_value=sensor;raw.color_matrix=matrix
+        expected=np.einsum('...j,ij->...i',sensor.astype(np.float32),matrix[:,:3])
+        weight=np.asarray(Image.fromarray(mask).resize((603,777),Image.Resampling.BILINEAR))
+        weight=gaussian_filter(weight,1.2)[:,:,None]
+        y=np.sum(expected*np.array([.2126,.7152,.0722],np.float32),-1,keepdims=True)
+        expected=(expected*(1-weight)+y*weight)*(8/65535)
+        with tempfile.TemporaryDirectory() as tmp,patch('kora.studio.rawpy.imread',return_value=raw), \
+             patch('kora.studio.bayer_clipping',return_value=(None,mask)), \
+             patch('kora.studio.recover_camera_highlights',side_effect=lambda a,*args:a):
+            path=Path(tmp)/'fixture.DNG';path.write_bytes(b'fixture')
+            actual,_=_decode_sensor(path,False,True)
+        np.testing.assert_array_equal(actual,expected)
+
     def test_q3_reference_color_applies_once_to_preview_and_full_decode(self):
         metadata={'Make':'LEICA CAMERA AG','Model':'LEICA Q3 43','BaselineExposure':.25}
         pixels=np.array([[[-.1,.2,2.],[.5,.8,.3]]],np.float32)

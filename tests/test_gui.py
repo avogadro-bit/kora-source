@@ -88,13 +88,13 @@ class StaticGuiTests(unittest.TestCase):
         self.assertNotIn('queueRender("full")',script)
         self.assertNotIn('scale(${viewScale})',script)
 
-    def test_four_way_tone_controls_and_interactive_preview_are_wired(self):
+    def test_four_way_tone_controls_and_full_raw_display_are_wired(self):
         script=(STATIC/'app.js').read_text(encoding='utf-8')
         for control in ('Highlights","highlights"','Whites","whites"',
                         'Shadows","shadows"','Blacks","blacks"'):
             self.assertIn(control,script)
-        self.assertIn('QUICK PREVIEW',script)
-        self.assertIn('body:JSON.stringify({id,recipe:settings,quality:"interactive"})',script)
+        self.assertIn('FULL RAW',script)
+        self.assertIn('body:JSON.stringify({id,recipe:settings,quality:"display",edge})',script)
         self.assertIn('renderController?.abort()',script)
 
 

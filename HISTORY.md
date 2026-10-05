@@ -2,6 +2,43 @@
 
 Ces notes décrivent les étapes antérieures ; suivre README.md pour installer la version actuelle.
 
+## 0.2.40 — Sélecteur de simulations mieux délimité
+
+Encadré plus visible autour du choix de film : fond légèrement éclairci,
+bordure contrastée, espace intérieur et menu déroulant mieux marqué.
+Le titre et la description gagnent en lisibilité.
+
+## 0.2.39 — Catégories de réglages plus lisibles
+
+Titres du panneau de droite légèrement agrandis, plus contrastés et plus
+marqués, sur un fond discret avec un repère latéral. Séparateurs un peu plus
+visibles pour mieux distinguer les groupes, sans changer les réglages.
+
+## 0.2.38 — Chargement RAW plus rapide
+
+Le calcul du grain de référence est réutilisé pendant l'estimation de
+l'exposition. Les traitements indépendants des couleurs et des hautes lumières
+DNG utilisent plusieurs cœurs, avec moins de grandes copies en mémoire.
+Le décodage complet et les réglages photographiques sont conservés.
+[Mesures et validation](docs/LOADING_0.2.38.md).
+
+## 0.2.37 — Affichage RAW détaillé et zoom réactif
+
+Premier rendu calculé depuis le RAW complet à la résolution utile de l'écran,
+chargement parallèle du capteur et de la référence d'exposition, caches de
+rendus et de plusieurs RAW bornés en mémoire. Préparation de la photo suivante
+sur les machines compatibles, détails demandés immédiatement au zoom, et
+dézoom limité à la vue entière. [Mesures et limites](docs/DISPLAY_0.2.37.md).
+
+## 0.2.36 — Points colorés après recadrage
+
+Correction du débordement des valeurs de couleur lors de la conversion finale
+en JPEG ou TIFF après redimensionnement. Les valeurs légèrement négatives ou
+supérieures au blanc sont maintenant bornées avant leur conversion en entiers,
+ce qui supprime les points multicolores sur les vues recadrées et les exports
+réduits. Le traitement RAW et le modèle de grain restent inchangés.
+[Reproduction et vérification](docs/CROP_SPECKLES_0.2.36.md).
+
 ## 0.2.35 — Profils optiques et reconnaissance des objectifs
 
 Base Lensfun du 24 septembre 2026 intégrée : 1 569 profils et 1 057 boîtiers,

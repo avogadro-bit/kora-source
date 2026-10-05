@@ -77,6 +77,17 @@ def film_grain(shape,size,scale=1,origin=(0,0)):
     return result
 
 
+@lru_cache(maxsize=8)
+def _small_grain(shape,size,scale,origin):
+    # Exposure fitting renders the same tiny scene repeatedly. Its grain
+    # coordinates never change with exposure or strength: compute the field
+    # once, without omitting grain from the fit or changing its statistics.
+    # Only <= 256 x 256 fields enter this cache (at most 2 MiB in total).
+    field=film_grain(shape,size,scale,origin)
+    field.setflags(write=False)
+    return field
+
+
 def apply_film_grain(a,strength,size,scale=1,origin=(0,0)):
     """Add fine luminance roughness, preserving black/white and RGB hue direction."""
     if strength=='off':return
@@ -86,11 +97,12 @@ def apply_film_grain(a,strength,size,scale=1,origin=(0,0)):
         raise ValueError('Invalid grain size or scale')
     weights=np.array([.2126,.7152,.0722],np.float32)
     shape=a.shape[:2]
+    cached=_small_grain(shape,size,scale,tuple(origin)) if max(shape)<=256 else None
     rows=max(8,min(128,round(128*scale)))
     def process(start,stop):
         block=a[start:stop]
         y=np.clip(np.sum(block*weights,-1),0,1)
-        field=_grain_rows(shape,size,scale,origin,start,stop)
+        field=cached[start:stop] if cached is not None else _grain_rows(shape,size,scale,origin,start,stop)
         # X-M5 paired exports: nearly achromatic, approximately constant
         # amplitude through midtones, SMALL stronger per pixel than LARGE.
         # Retain endpoint protection rather than reproducing camera clipping.

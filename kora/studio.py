@@ -4,6 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 import json
+import threading
 import numpy as np
 from PIL import Image, ImageCms
 from pydantic import Field
@@ -114,14 +115,20 @@ def _decode_sensor(path, preview=True, floating_camera_rgb=False, *, user_wb=Non
             if (a.shape[-1]!=3 or matrix.shape!=(3,4) or not np.isfinite(matrix).all()
                     or np.max(np.abs(matrix[:,:3]))<.01 or np.any(matrix[:,3]!=0)):
                 raise ValueError('Unsupported DNG color matrix; conversion stopped.')
-            a=recover_camera_highlights(a.astype(np.float32),clipping)
-            a=np.einsum('...j,ij->...i',a,matrix[:,:3])
+            camera=recover_camera_highlights(a.astype(np.float32),clipping)
             mask=np.asarray(Image.fromarray(highlight_mask).resize((a.shape[1],a.shape[0]),Image.Resampling.BILINEAR))
             # Smoothly reduce uncertain colour as the last channel saturates;
             # retain luminance and RAW headroom, never manufacture texture.
-            mask=gaussian_filter(mask,.6 if preview else 1.2)[:,:,None]
-            y=np.sum(a*np.array([.2126,.7152,.0722],np.float32),-1,keepdims=True)
-            a=a*(1-mask)+y*mask
+            mask=blur(mask,.6 if preview else 1.2)[:,:,None]
+            a=np.empty_like(camera)
+            def convert(start,stop):
+                rgb=np.einsum('...j,ij->...i',camera[start:stop],matrix[:,:3])
+                weight=mask[start:stop]
+                y=np.sum(rgb*np.array([.2126,.7152,.0722],np.float32),-1,keepdims=True)
+                a[start:stop]=rgb*(1-weight)+y*weight
+            # Independent row bands keep the same arithmetic while avoiding
+            # several 60–100 MP temporaries and using the shared worker pool.
+            run_parallel_rows(len(a),convert)
         else:
             a=neutralize_clipped_rgb(a,highlight_mask,preview=preview)
         reference=None
@@ -133,15 +140,28 @@ def _decode_sensor(path, preview=True, floating_camera_rgb=False, *, user_wb=Non
                 reference=np.asarray(im,dtype=np.float32)/255
             except (rawpy.LibRawNoThumbnailError,rawpy.LibRawUnsupportedThumbnailError,OSError,ValueError):
                 pass
-    a=a.astype(np.float32)*(8/65535)
+    a=np.asarray(a,dtype=np.float32)
+    a*=8/65535
     # A responsive whole-image proxy. Source pixels are requested separately
     # as viewport tiles at 100%+, so edits never rebuild a giant browser JPEG.
     a=resize_float(a,1800) if preview else a
     return (a if floating_camera_rgb else np.maximum(a,0)),reference
 
 
-@lru_cache(maxsize=2)
+@lru_cache(maxsize=16)
+def _source_lock(path):
+    return threading.Lock()
+
+
 def _preview_source(path,mtime,size):
+    # Metadata inspection and early full decoding can ask for the exposure
+    # anchor together. Only one computes it; both use identical cached data.
+    with _source_lock(path):
+        return _cached_preview_source(path,mtime,size)
+
+
+@lru_cache(maxsize=3)
+def _cached_preview_source(path,mtime,size):
     metadata=exif(path)
     info=source_exposure(metadata,path.suffix)
     wb=source_white_balance(metadata,path.suffix)
@@ -181,6 +201,9 @@ def _preview_source(path,mtime,size):
     return linear,info
 
 
+_preview_source.cache_clear=_cached_preview_source.cache_clear
+
+
 def source_details(path):
     path=Path(path);require_local(path);st=path.stat()
     return dict(_preview_source(path,st.st_mtime_ns,st.st_size)[1])
@@ -188,14 +211,19 @@ def source_details(path):
 
 def decode(path, preview=True):
     path=Path(path);require_local(path);st=path.stat()
-    linear,info=_preview_source(path,st.st_mtime_ns,st.st_size)
-    if preview:return linear.copy()
+    if preview:return _preview_source(path,st.st_mtime_ns,st.st_size)[0].copy()
+    # Full sensor decoding does not depend on the exposure fit. Start it
+    # while inspection prepares that fit, instead of waiting for it first.
+    metadata=exif(path)
+    info=source_exposure(metadata,path.suffix)
+    wb=source_white_balance(metadata,path.suffix)
     if info.get('floating_camera_rgb'):
         a,_=_decode_sensor(path,False,floating_camera_rgb=True)
-    elif info['white_balance']['shift_removed']:
-        a,_=_decode_sensor(path,False,user_wb=info['white_balance']['user_wb'])
+    elif wb['shift_removed']:
+        a,_=_decode_sensor(path,False,user_wb=wb['user_wb'])
     else:
         a,_=_decode_sensor(path,False)
+    _,info=_preview_source(path,st.st_mtime_ns,st.st_size)
     return validate_linear_input(apply_input_color(a*info['gain'],info.get('input_profile')))
 
 
@@ -388,6 +416,19 @@ def transform_output(a,r):
     return a
 
 
+def _integer_pixels(a,dtype):
+    """Saturate final display samples before casting to an unsigned format."""
+    # Lanczos crop/size alignment can overshoot after render's gamut clamp.
+    # An unchecked cast wraps negative channels to white (and values > 1
+    # to black), creating coloured speckles. Bound only the final output;
+    # signed/HDR values earlier in the RAW pipeline must remain available.
+    maximum=np.iinfo(dtype).max
+    pixels=np.multiply(a,maximum)
+    np.rint(pixels,out=pixels)
+    np.clip(pixels,0,maximum,out=pixels)
+    return pixels.astype(dtype)
+
+
 def encode(a,r,preview=False,*,detail=False):
     icc=ImageCms.ImageCmsProfile(ImageCms.createProfile('sRGB')).tobytes()
     if r.color_space=='adobe_rgb' and not preview:
@@ -400,14 +441,13 @@ def encode(a,r,preview=False,*,detail=False):
         icc=profile.read_bytes()
     buf=BytesIO()
     if preview or r.file_type=='jpeg':
-        im=Image.fromarray(np.round(a*255).astype(np.uint8))
+        im=Image.fromarray(_integer_pixels(a,np.uint8))
         im.save(buf,'JPEG',quality=(96 if detail else 90) if preview else (96 if r.image_quality=='fine' else 82),
             subsampling=0 if preview and detail else -1,icc_profile=icc,
             comment=('KŌRA: '+('official GFX ETERNA 55 LUT; uncalibrated photo adapter' if r.film in OFFICIAL_FILMS else 'independent artistic look')).encode())
         return buf.getvalue(),'image/jpeg'
     dtype=np.uint16 if r.file_type=='tiff16' else np.uint8
-    maximum=65535 if r.file_type=='tiff16' else 255
-    tifffile.imwrite(buf,np.round(a*maximum).astype(dtype),photometric='rgb',metadata=None,
+    tifffile.imwrite(buf,_integer_pixels(a,dtype),photometric='rgb',metadata=None,
         description=json.dumps({'renderer':'official-lut-photo-adapter-v1','recipe_response_revision':24,'official_lut':r.film if r.film in OFFICIAL_FILMS else None,'exact_fuji_render':False,'recipe':r.model_dump()}),
         extratags=[(34675,'B',len(icc),icc,False)])
     return buf.getvalue(),'image/tiff'

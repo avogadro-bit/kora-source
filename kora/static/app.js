@@ -208,7 +208,7 @@ function applyFullToSelection(value){const next={...defaults,...structuredClone(
 function exportLabel(){const count=selectedIds.size;return count>1?`Export ${count} JPEGs`:"Export Image";}
 function scheduleFullPrefetch(id,delay=1200){
  clearTimeout(prefetchTimer);if(exportInProgress||!fullResolutionPrefetch||!id||prefetchedId===id)return;
- prefetchTimer=setTimeout(()=>{prefetchedId=id;fetch("/api/prefetch",{method:"POST",headers:{"X-Fuji-Session":session,"Content-Type":"application/json"},body:JSON.stringify({id})}).then(response=>{if(!response.ok&&prefetchedId===id)prefetchedId=null;}).catch(()=>{if(prefetchedId===id)prefetchedId=null;});},delay);
+ prefetchTimer=setTimeout(()=>{prefetchedId=id;fetch("/api/prefetch",{method:"POST",headers:{"X-Fuji-Session":session,"Content-Type":"application/json"},body:JSON.stringify({id,active_id:selected?.id})}).then(response=>{if(!response.ok&&prefetchedId===id)prefetchedId=null;}).catch(()=>{if(prefetchedId===id)prefetchedId=null;});},delay);
 }
 function updateSelectionState(){
  const count=selectedIds.size,label=count?`${count} photo${count===1?"":"s"} selected`:"No photo selected";
@@ -255,16 +255,17 @@ function toggleSelected(f){
 $("#selection-clear").onclick=()=>{if(!selected)return;selectedIds.clear();selectedIds.add(selected.id);undoStack=[];future=[];drawLibrary();toast("Group cleared. Adjustments now apply only to the photo being viewed.");};
 async function openPhoto(f,preserveSelection=false){
  clearTimeout(prefetchTimer);
+ clearTimeout(renderTimer);renderController?.abort();renderAgain=false;
  syncActiveRecipe();
  if(!preserveSelection){selectedIds.clear();selectedIds.add(f.id);undoStack=[];future=[];}else if(!selectedIds.has(f.id)){selectedIds.add(f.id);}
  ensureRecipe(f.id,recipe||defaults);recipe=structuredClone(ensureRecipe(f.id));
- opticsInfo=null;shootingSettings=null;sourceCamera=null;currentRenderQuality=null;previewVariant=null;fullWidth=fullHeight=0;clearDetailTiles(true);$("#shooting").disabled=true;const version=++selectionVersion;renderRevision++;comparing=false;beforeURL && URL.revokeObjectURL(beforeURL);beforeURL=null;selected=f;$("#export-image").disabled=true;$("#compare").disabled=true;populate();drawLibrary();$("#filename").textContent=f.name;$("#file-subtitle").textContent=f.format+" · "+f.group;$("#preview").hidden=true;$("#empty").hidden=true;$("#loading").hidden=false;$("#zoom").disabled=true;resetView();$("#recipe-state").textContent=selectedIds.size>1?`Editing ${selectedIds.size} selected photos`:"Photo recipe restored";$("#preview-kind").textContent="Opening…";
+ opticsInfo=null;shootingSettings=null;sourceCamera=null;currentRenderQuality=null;previewVariant=null;fullWidth=fullHeight=0;clearDetailTiles(false);$("#shooting").disabled=true;const version=++selectionVersion;renderRevision++;comparing=false;beforeURL && URL.revokeObjectURL(beforeURL);beforeURL=null;selected=f;$("#export-image").disabled=true;$("#compare").disabled=true;populate();drawLibrary();$("#filename").textContent=f.name;$("#file-subtitle").textContent=f.format+" · "+f.group;$("#preview").hidden=true;$("#empty").hidden=true;$("#loading").hidden=false;$("#zoom").disabled=true;resetView();$("#recipe-state").textContent=selectedIds.size>1?`Editing ${selectedIds.size} selected photos`:"Photo recipe restored";$("#preview-kind").textContent="Opening…";
  try{
+  scheduleFullPrefetch(f.id,0);
   const info=await api("/api/photo/"+f.id);if(version!==selectionVersion)return;
   fullWidth=info.developed_size?.width||info.sizes.width;fullHeight=info.developed_size?.height||info.sizes.height;opticsInfo=info.optics;updateOpticsStatus();shootingSettings=info.shooting_settings;$("#shooting").disabled=!shootingSettings;const x=info.exif;sourceCamera=String(x.Model||"").trim().toUpperCase();populate();$("#file-subtitle").textContent=[info.input_normalization?.label||f.format, `Developed ${fullWidth} × ${fullHeight}`, info.source_exposure?.ev ? `Base${info.source_exposure.reference_matched?" estimated":""} ${info.source_exposure.ev>0?"+":""}${info.source_exposure.ev.toFixed(2)} EV` : null].filter(Boolean).join(" · ");
   $("#photo-info").textContent=[info.input_normalization?.label||f.format,x.FNumber?"ƒ/"+x.FNumber:null,x.ExposureTime?x.ExposureTime+" s":null,x.ISO?"ISO "+x.ISO:null].filter(Boolean).join("   ·   ")||"File metadata";
-  if(info.preview_available&&!info.source_exposure?.white_balance?.shift_removed){if(!embeddedPictures.has(f.id)){const blob=await api("/api/preview/"+f.id);if(version!==selectionVersion)return;embeddedPictures.set(f.id,URL.createObjectURL(blob));while(embeddedPictures.size>32){const key=embeddedPictures.keys().next().value;URL.revokeObjectURL(embeddedPictures.get(key));embeddedPictures.delete(key);}}if(version!==selectionVersion)return;$("#preview").src=embeddedPictures.get(f.id);$("#preview").hidden=false;$("#zoom").disabled=false;$("#preview-kind").textContent="EMBEDDED PREVIEW · recipe not applied";drawLibrary();}
-  else{$("#preview-kind").textContent="Developing RAW…";}
+  $("#preview-kind").textContent="Developing full-resolution RAW…";
   scheduleRender(0);
  }catch(e){reportError(e,"handled");if(version===selectionVersion){toast(e.message);$("#preview-kind").textContent=e.message;$("#photo-info").textContent="This file could not be opened.";}}
  finally{if(version===selectionVersion)$("#loading").hidden=true;}
@@ -279,13 +280,13 @@ $("#store-preset").onclick=()=>{try{localStorage.setItem("film-studio-"+$("#pres
 $("#recall-preset").onclick=async()=>{try{const slot=$("#preset-slot").value,body=localStorage.getItem("film-studio-"+slot)||localStorage.getItem("fuji-studio-"+slot);if(!body)return toast("This slot is empty.");const result=await api("/api/recipe",{method:"POST",headers:{"Content-Type":"application/json"},body});applySettings(result.recipe);}catch(e){reportError(e,"handled");toast(e.message);}};
 function scheduleRender(delay=70){
  if(beforeURL)URL.revokeObjectURL(beforeURL);beforeURL=null;
- renderRevision++;currentRenderQuality=null;previewVariant=null;comparing=false;clearDetailTiles(true); $("#compare").textContent="View Without Film";
+ renderRevision++;currentRenderQuality=null;previewVariant=null;comparing=false;clearTimeout(tileTimer);tileGeneration++;detailQueue.pause();activeTilePlan=null; $("#compare").textContent="View Without Film";
  $("#export-image").disabled=true;$("#compare").disabled=true;$("#recipe-state").textContent="Settings pending…";
  clearTimeout(renderTimer);
  renderTimer=setTimeout(queueRender,delay);
 }
 function queueRender(){
- if(!selected)return;
+ if(!selected||!fullWidth||!fullHeight)return;
  if(exportInProgress){renderAgain=true;return;}
  if(renderBusy){
   renderAgain=true;renderController?.abort();
@@ -297,24 +298,25 @@ async function updateRender(){
  if(!selected)return;
  renderBusy=true;renderAgain=false;
  const controller=new AbortController();renderController=controller;
- const revision=renderRevision,id=selected.id,settings=structuredClone(recipe);
+ const revision=renderRevision,id=selected.id,settings=structuredClone(recipe),edge=displayEdge();
  const showOverlay=photo.hidden;$("#loading").hidden=!showOverlay;$("#loading").textContent="Updating preview…";
  $("#recipe-state").textContent="Updating screen preview…";
  try{
-  const blob=await api("/api/render",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id,recipe:settings,quality:"interactive"}),signal:controller.signal});
+  const blob=await api("/api/render",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id,recipe:settings,quality:"display",edge}),signal:controller.signal});
   if(revision!==renderRevision||id!==selected?.id)return;
   const nextURL=await decodedPreviewURL(blob);
   if(revision!==renderRevision||id!==selected?.id){URL.revokeObjectURL(nextURL);return;}
-  const previousURL=renderURL;renderURL=nextURL;previewVariant="recipe";
+  const previousURL=renderURL;clearDetailTiles(false);renderURL=nextURL;previewVariant="recipe";
   $("#preview").src=renderURL;$("#preview").hidden=false;$("#zoom").disabled=false;
   if(previousURL)URL.revokeObjectURL(previousURL);
- currentRenderQuality="interactive";
- $("#preview-kind").textContent="QUICK PREVIEW · "+(films.find(f=>f[0]===settings.film)?.[1]||settings.film);
+ currentRenderQuality="display";
+ $("#preview-kind").textContent="FULL RAW · "+(films.find(f=>f[0]===settings.film)?.[1]||settings.film);
   $("#recipe-state").textContent="Refining image…";
   if(pictures.has(id))URL.revokeObjectURL(pictures.get(id));pictures.set(id,URL.createObjectURL(blob));while(pictures.size>32){const key=pictures.keys().next().value;URL.revokeObjectURL(pictures.get(key));pictures.delete(key);}drawLibrary();
   $("#export-image").disabled=false;$("#compare").disabled=false;updateSelectionState();
-  updateView(180);
-  scheduleFullPrefetch(id);
+  updateView(0);
+  const ordered=visibleFiles(),index=ordered.findIndex(f=>f.id===id),next=ordered[index+1]||ordered[index-1];
+  if(next?.local)scheduleFullPrefetch(next.id,500);
  }catch(e){reportError(e,"handled");if(e.name!=="AbortError"&&revision===renderRevision){toast(e.message);$("#recipe-state").textContent="Render failed · previous preview";}}
  finally{if(renderController===controller)renderController=null;renderBusy=false;$("#loading").hidden=true;if(renderAgain||revision!==renderRevision){renderAgain=false;queueRender();}}
 }
@@ -323,7 +325,7 @@ $("#compare").onclick=async()=>{
  const id=selected.id,rev=renderRevision;
  $("#compare").disabled=true;
  try{
-  if(!beforeURL){const b=await api("/api/render",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id,recipe,neutral:true,quality:"interactive"})});if(id!==selected?.id||rev!==renderRevision)return;const url=await decodedPreviewURL(b);if(id!==selected?.id||rev!==renderRevision){URL.revokeObjectURL(url);return;}beforeURL=url;}
+  if(!beforeURL){const b=await api("/api/render",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id,recipe,neutral:true,quality:"display",edge:displayEdge()})});if(id!==selected?.id||rev!==renderRevision)return;const url=await decodedPreviewURL(b);if(id!==selected?.id||rev!==renderRevision){URL.revokeObjectURL(url);return;}beforeURL=url;}
   comparing=!comparing;$("#preview").src=comparing?beforeURL:renderURL;
   previewVariant=comparing?"neutral":"recipe";clearDetailTiles(false);
   $("#compare").textContent=comparing?"View Recipe":"View Without Film";
@@ -400,13 +402,14 @@ let drags=0;document.addEventListener("dragenter",e=>{if(e.dataTransfer.types.in
 setupControls();
 (async()=>{try{const data=await api("/api/library");rawExtensions=new Set(data.engine.raw_extensions||[".raf",".dng"]);thumbnailWorkerLimit=Math.max(2,Math.min(8,Number(data.performance?.thumbnail_workers)||2));fullResolutionPrefetch=!!data.performance?.full_resolution_prefetch;$("#file-input").accept=[...rawExtensions].join(",");files=[];defaults=data.recipe;recipe=structuredClone(defaults);populate();drawLibrary();renderRecipeLibrary(null);updateLutSetup(data.engine);$("#input-folder").textContent="Choose a folder to begin";const savedRecipeFolder=localStorage.getItem("film-recipe-folder");if(savedRecipeFolder)loadRecipeFolder(savedRecipeFolder,{quiet:true}).catch(e=>{reportError(e,"handled");localStorage.removeItem("film-recipe-folder");renderRecipeLibrary(null);});if(data.engine.missing_luts?.length)$("#setup-dialog").showModal();}catch(e){reportError(e,"handled");toast(e.message);$("#file-subtitle").textContent="Reopen the full link displayed in the terminal.";}})();
 
-// The quick image remains underneath progressively decoded RAW tiles in EVERY
-// view. Zoom percentages count physical screen pixels, including Retina.
+// The screen image is derived from the full RAW. Source tiles add zoom detail
+// without removing that image. Percentages count physical screen pixels.
 let zoomMode="fit",viewScale=1,panX=0,panY=0,panGesture=null;
 const viewport=$("#canvas"),photo=$("#preview"),detailLayer=$("#detail-layer"),TILE_SIZE=768;
 const detailNodes=new Map(),tileDecodes=new Map();
 let activeTilePlan=null;
 const screenDensity=()=>KoraViewer.density(window.devicePixelRatio);
+const displayEdge=()=>Math.max(512,Math.min(4096,Math.ceil(Math.max(viewport.clientWidth,viewport.clientHeight)*screenDensity()/256)*256));
 const detailQueue=new KoraViewer.DetailQueue({
  cached:key=>tileURLs.has(key),
  load:(tile,signal)=>api("/api/tile",{method:"POST",headers:{"Content-Type":"application/json"},
@@ -470,7 +473,7 @@ function layoutDetailTiles(only){
  const images=only?[only]:detailLayer.querySelectorAll("img");
  for(const image of images){image.style.left=Number(image.dataset.x)*viewScale+"px";image.style.top=Number(image.dataset.y)*viewScale+"px";image.style.width=Number(image.dataset.width)*viewScale+"px";image.style.height=Number(image.dataset.height)*viewScale+"px";image.style.zIndex=Number(image.dataset.level)===activeTilePlan?.level?2:1;}
 }
-function scheduleTileRefresh(delay=120){
+function scheduleTileRefresh(delay=0){
  clearTimeout(tileTimer);
  if(exportInProgress||!selected||!previewVariant||!fullWidth||!fullHeight)return;
  if(delay<=0){refreshVisibleTiles();return;}
@@ -495,7 +498,7 @@ function refreshVisibleTiles(){
  const plan=KoraViewer.planTiles({...geometry,viewportWidth:viewport.clientWidth,viewportHeight:viewport.clientHeight,
   scale:viewScale,panX,panY,dpr:screenDensity(),size:TILE_SIZE});
  const tiles=plan.tiles.map(t=>({...t,id,settings,neutral:comparing,generation:tileGeneration,
-  key:`${id}:${revision}:${previewVariant}:${t.level}:${t.x}:${t.y}`}));
+  key:`${id}:${JSON.stringify(settings)}:${previewVariant}:${t.level}:${t.x}:${t.y}`}));
  activeTilePlan={...plan,tiles,visible:tiles.filter(t=>t.visible),keys:new Set(tiles.map(t=>t.key))};
  for(const [key,image] of detailNodes){
   const {x0,y0,x1,y1}=plan.bounds||{},x=Number(image.dataset.x),y=Number(image.dataset.y);
@@ -507,11 +510,16 @@ function refreshVisibleTiles(){
  for(const tile of tiles)if(tileURLs.has(tile.key))addDetailTile(tile).catch(error=>{detailQueue.failed.add(tile.key);reportError(error,"viewer.decode");updateDetailStatus();});
  detailQueue.update(tiles);trimTileCache();
 }
-function updateView(tileDelay=120){
+function updateView(tileDelay=0){
  const ready=!photo.hidden&&photo.naturalWidth>0;
  for(const id of ["zoom","zoom-in","zoom-out"])$("#"+id).disabled=!ready;
  if(!ready)return;
+ const minimum=fitScale()*screenDensity();
+ if(zoomMode!=="fit"&&Number(zoomMode)<=minimum)zoomMode="fit";
  viewScale=zoomMode==="fit"?fitScale():KoraViewer.scaleForZoom(Number(zoomMode),screenDensity());
+ $("#zoom-out").disabled=zoomMode==="fit";
+ $("#zoom-in").disabled=viewScale*screenDensity()>=4;
+ for(const option of $("#zoom").options)option.disabled=option.value!=="fit"&&Number(option.value)<minimum;
  const geometry=outputGeometry(),displayWidth=geometry.width*viewScale,displayHeight=geometry.height*viewScale;
  const maxX=Math.max(0,(displayWidth-viewport.clientWidth)/2),maxY=Math.max(0,(displayHeight-viewport.clientHeight)/2);
  panX=Math.max(-maxX,Math.min(maxX,panX));panY=Math.max(-maxY,Math.min(maxY,panY));
@@ -533,9 +541,11 @@ function resetView(){zoomMode="fit";panX=panY=0;updateView(0);}
 function changeZoom(value,point){
  if(photo.hidden||!photo.naturalWidth)return;
  if(value==="fit"){resetView();return;}
- const next=Math.max(.02,Math.min(4,Number(value))),nextScale=KoraViewer.scaleForZoom(next,screenDensity()),box=viewport.getBoundingClientRect();
+ const next=KoraViewer.clampZoom(Number(value),fitScale()*screenDensity());
+ if(next<=fitScale()*screenDensity()){resetView();return;}
+ const nextScale=KoraViewer.scaleForZoom(next,screenDensity()),box=viewport.getBoundingClientRect();
  const x=point?point.clientX-box.left-viewport.clientWidth/2:0,y=point?point.clientY-box.top-viewport.clientHeight/2:0;
- panX=x-(x-panX)*nextScale/viewScale;panY=y-(y-panY)*nextScale/viewScale;zoomMode=next;updateView(100);
+ panX=x-(x-panX)*nextScale/viewScale;panY=y-(y-panY)*nextScale/viewScale;zoomMode=next;updateView(0);
 }
 photo.addEventListener("load",()=>updateView(0));photo.draggable=false;
 $("#zoom").title="100% = one image pixel per screen pixel. Fit also loads high-quality RAW detail.";
@@ -613,7 +623,7 @@ $("#fullscreen").onclick=async()=>{
 };
 document.addEventListener("fullscreenchange",()=>{$("#fullscreen").title=document.fullscreenElement?"Exit Full Screen":"Full Screen";});
 document.addEventListener("keydown",e=>{if(["INPUT","SELECT","TEXTAREA","BUTTON"].includes(document.activeElement.tagName)||document.activeElement.id==="wb-grid"||$("#folder-dialog").open||$("#engine-dialog").open||$("#setup-dialog").open)return;
- if(e.key==="Tab"){e.preventDefault();$("#focus-view").click();}else if(["+","="].includes(e.key)){e.preventDefault();changeZoom(viewScale*1.25);}else if(e.key==="-"){e.preventDefault();changeZoom(viewScale/1.25);}else if(e.key==="0")resetView();else if(e.key==="1")changeZoom(1);
+ if(e.key==="Tab"){e.preventDefault();$("#focus-view").click();}else if(["+","="].includes(e.key)){e.preventDefault();changeZoom(viewScale*screenDensity()*1.25);}else if(e.key==="-"){e.preventDefault();changeZoom(viewScale*screenDensity()/1.25);}else if(e.key==="0")resetView();else if(e.key==="1")changeZoom(1);
 });
 // Local folder browser: no copying of RAW files and no upload of a directory.
 let folderPath=null,folderParent=null,folderRevision=0,folderPurpose="photos";
@@ -711,7 +721,7 @@ async function selectPhotoFolder(path,recursive=false){
  try{
  const data=await api("/api/folder",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path,recursive})});
  if(revision!==folderLoadRevision)return;
- syncActiveRecipe();selectionVersion++;renderRevision++;renderController?.abort();selected=null;fullWidth=fullHeight=0;clearDetailTiles(true);selectedIds.clear();undoStack=[];future=[];thumbnailQueue=[];clearTimeout(thumbnailTimer);files=data.files;filter="all";$("#search").value="";for(const b of document.querySelectorAll("[data-filter]"))b.classList.toggle("active",b.dataset.filter==="all");
+ syncActiveRecipe();selectionVersion++;renderRevision++;renderController?.abort();selected=null;fullWidth=fullHeight=0;clearDetailTiles(false);selectedIds.clear();undoStack=[];future=[];thumbnailQueue=[];clearTimeout(thumbnailTimer);files=data.files;filter="all";$("#search").value="";for(const b of document.querySelectorAll("[data-filter]"))b.classList.toggle("active",b.dataset.filter==="all");
  photo.hidden=true;$("#empty").hidden=false;$("#loading").hidden=true;$("#filename").textContent="Choose a photo";$("#file-subtitle").textContent=files.length+" RAW file"+(files.length===1?"":"s")+" in this folder";$("#photo-info").textContent="";$("#preview-kind").textContent="No photo selected";$("#recipe-state").textContent="Recipe retained";
  $("#compare").disabled=$("#export-image").disabled=true;resetView();
  currentFolder=data.folder;folderPath=data.folder;$("#tree-recursive").checked=recursive;$("#current-folder-name").textContent=data.folder.split("/").filter(Boolean).pop()||"/";$("#current-folder-path").textContent=data.folder;$("#current-folder-count").textContent=files.length+" RAW photos";

@@ -6,6 +6,7 @@ Work before the camera matrix; two Bayer green sites are one colour channel.
 import numpy as np
 from PIL import Image
 from scipy.ndimage import gaussian_filter
+from .official_luts import run_parallel_rows
 
 
 def _resize(a, size):
@@ -137,16 +138,21 @@ def recover_camera_highlights(camera, clipping):
     size=(max(1,round(w*scale)),max(1,round(h*scale)))
     small=np.stack([_resize(camera[...,c],size) for c in range(3)],-1)
     mask=np.stack([_resize(clipping[...,c],size) for c in range(3)],-1)
+    channel_estimates=[[],[],[]]
+    def estimate_channels(start,stop):
+        for c in range(start,stop):
+            lost=mask[...,c]>.01
+            if not np.any(lost):continue
+            limit=float(np.median(small[...,c][lost]))
+            for anchor in range(3):
+                if anchor==c:continue
+                ratio=_smooth_highlight_ratio(small,mask,c,anchor,limit)
+                if ratio is not None:channel_estimates[c].append((anchor,ratio))
+    # The three donor estimates are independent and at most 600 px wide.
+    # Parallelize only that small calculation; full-size buffers stay serial.
+    run_parallel_rows(3,estimate_channels,block_rows=1,min_rows=1)
     result=camera.copy()
-    for c in range(3):
-        lost=mask[...,c]>.01
-        if not np.any(lost):continue
-        limit=float(np.median(small[...,c][lost]))
-        estimates=[]
-        for anchor in range(3):
-            if anchor==c:continue
-            ratio=_smooth_highlight_ratio(small,mask,c,anchor,limit)
-            if ratio is not None:estimates.append((anchor,ratio))
+    for c,estimates in enumerate(channel_estimates):
         if not estimates:continue
         target_mask=_resize(clipping[...,c],(w,h))
         numerator=np.zeros((h,w),np.float32)

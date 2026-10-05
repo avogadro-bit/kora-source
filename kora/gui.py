@@ -33,7 +33,7 @@ from .engine import status
 from .lut_install import install_archive
 from .official_luts import FILMS as OFFICIAL_FILMS, lut_worker_count
 from .raw import local_file, exif
-from .studio import StudioRecipe as Recipe, studio_status, decode, render, encode, shooting_settings, source_details
+from .studio import StudioRecipe as Recipe, studio_status, decode, render, encode, shooting_settings, source_details, _resize_float_to, resize_float
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 
@@ -42,7 +42,8 @@ class RenderRequest(BaseModel):
     id: str
     recipe: Recipe
     neutral: StrictBool = False
-    quality: Literal['interactive','full'] = 'full'
+    quality: Literal['interactive','display','full'] = 'full'
+    edge: int = Field(default=3200, ge=512, le=4096)
 
 
 class TileRequest(BaseModel):
@@ -66,6 +67,7 @@ class BatchExportRequest(BaseModel):
 class PrefetchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str = Field(min_length=1, max_length=64)
+    active_id: str | None = Field(default=None, max_length=64)
 
 STATIC = Path(__file__).with_name("static")
 # 100 MP 3FR originals can exceed 200 MiB. Imports are streamed to disk.
@@ -166,6 +168,7 @@ class Library:
         self.thumbnails = OrderedDict()
         self.details = {}
         self.linear_cache = OrderedDict()
+        self.display_cache = OrderedDict()
         self.corrected_cache = OrderedDict()
         self.tile_cache = OrderedDict()
         self.tile_generations = OrderedDict()
@@ -173,6 +176,7 @@ class Library:
         self.recipe_folder = None
         self.recipe_files = {}
         self.capacity = dict(capacity or host_capacity())
+        self.linear_cache_budget = min(3*1024**3, self.capacity.get('physical_memory',8*1024**3)//10)
         self.lock = threading.RLock()
         # Separate cheap embedded-thumbnail I/O from memory-heavy RAW decode.
         # Distinct rawpy objects may work concurrently; the limits below keep
@@ -462,6 +466,9 @@ class Library:
         if not local_file(path):
             raise ValueError("The cloud file is not downloaded. Make it available offline first.")
 
+        if not export and request.quality == 'display':
+            return self.display_preview(request)
+
         def finish(linear):
             stage=time.perf_counter()
             if request.recipe.lens_distortion != 'off' or request.recipe.lens_vignetting != 'off':
@@ -500,29 +507,74 @@ class Library:
                 timings['decode_or_prefetch_wait']=time.perf_counter()-stage
                 return finish(linear)
 
-    def full_linear(self, identifier, check_current=lambda:None):
+    def display_preview(self, request):
+        """Screen-sized rendering from the full RAW, cached independently of zoom."""
+        path=Path(self.files[request.id]['path']);stat=path.stat()
+        key=(request.id,stat.st_mtime_ns,stat.st_size,request.recipe.model_dump_json(),request.neutral,request.edge)
+        with self.lock:
+            if key in self.display_cache:
+                self.display_cache.move_to_end(key)
+                return self.display_cache[key]
+        self.check_export_priority()
+        linear=self.full_linear(request.id,self.check_export_priority)
+        with self.tile_slot():
+            geometry=output_geometry(linear.shape,request.recipe)
+            _,_,cw,ch=geometry['source']
+            edge=min(request.edge,max(geometry['output']))
+            factor=max(1,max(cw,ch)/edge)
+            size=(max(1,round(linear.shape[1]/factor)),max(1,round(linear.shape[0]/factor)))
+            # Integrate full-resolution sensor detail into physical screen
+            # pixels. The small half-size decode is never the displayed source.
+            pixels=_resize_float_to(linear,size,Image.Resampling.BOX)
+            if request.recipe.lens_distortion!='off' or request.recipe.lens_vignetting!='off':
+                from .optics import inspect_optics,apply_corrections
+                pixels=apply_corrections(pixels,inspect_optics(path),request.recipe.lens_distortion,request.recipe.lens_vignetting)
+            context=render_context(path)
+            display_recipe=request.recipe.model_copy(update={'image_size':'L'})
+            pixels=render(pixels,display_recipe,neutral=request.neutral,context=context)
+            result=encode(resize_float(pixels,edge),request.recipe,preview=True,detail=True)
+        with self.lock:
+            self.display_cache[key]=result
+            while len(self.display_cache)>24 or sum(len(value[0]) for value in self.display_cache.values())>64*1024**2:
+                self.display_cache.popitem(last=False)
+        return result
+
+    def full_linear(self, identifier, check_current=lambda:None, protected=None):
         """Decode once; viewport tiles and export share the active RAW buffer."""
         with self.lock:
             item=self.files[identifier]
         path=Path(item['path'])
         if not local_file(path):
             raise ValueError("The cloud file is not downloaded. Make it available offline first.")
+        check_current()
+        with self.lock:
+            if identifier in self.linear_cache:
+                self.linear_cache.move_to_end(identifier)
+                return self.linear_cache[identifier]
         # A counting decoder semaphore does not coalesce simultaneous cache
         # misses from prefetch, tiles and export. One cache fill owns this lock.
         with self.full_decode_lock, self.decoder_lock:
             check_current()
-            if identifier not in self.linear_cache:
-                self.linear_cache[identifier]=decode(path,preview=False)
-                while len(self.linear_cache)>1:self.linear_cache.popitem(last=False)
-            self.linear_cache.move_to_end(identifier)
-            return self.linear_cache[identifier]
+            with self.lock:
+                if identifier in self.linear_cache:
+                    self.linear_cache.move_to_end(identifier)
+                    return self.linear_cache[identifier]
+            result=decode(path,preview=False)
+            with self.lock:
+                self.linear_cache[identifier]=result
+                # Never evict the active photo to prefetch a neighbour.
+                while len(self.linear_cache)>1 and (len(self.linear_cache)>3 or
+                        sum(value.nbytes for value in self.linear_cache.values())>self.linear_cache_budget):
+                    victim=next(key for key in self.linear_cache if key!=protected)
+                    del self.linear_cache[victim]
+            return result
 
-    def prefetch(self,identifier):
+    def prefetch(self,identifier,active_id=None):
         """Use idle time and capable Macs to prepare the next full export."""
         if not self.capacity.get('full_resolution_prefetch',False):return False
         self.check_export_priority()
-        self.full_linear(identifier,self.check_export_priority)
-        return True
+        self.full_linear(identifier,self.check_export_priority,protected=active_id)
+        return identifier in self.linear_cache
 
     def render_tile(self, request):
         """Render one source-resolution viewport tile, never a giant browser JPEG."""
@@ -925,7 +977,7 @@ class Handler(BaseHTTPRequestHandler):
             if route.path == "/api/prefetch":
                 request=PrefetchRequest.model_validate_json(body)
                 self.diagnostic_request = request
-                return self.send(200,{"ready":self.server.library.prefetch(request.id)})
+                return self.send(200,{"ready":self.server.library.prefetch(request.id,request.active_id)})
             if route.path == "/api/tile":
                 request = TileRequest.model_validate_json(body)
                 self.diagnostic_request = request

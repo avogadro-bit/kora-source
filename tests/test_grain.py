@@ -1,10 +1,38 @@
 import unittest
+from unittest.mock import patch
 import numpy as np
-from kora.grain import film_grain, apply_film_grain
+from kora.grain import film_grain, apply_film_grain, _small_grain
 from kora.studio import render, StudioRecipe
 
 
 class GrainTests(unittest.TestCase):
+    def test_exposure_fit_reuses_grain_without_reusing_scene_pixels(self):
+        _small_grain.cache_clear()
+        source=np.random.default_rng(12).uniform(.02,.9,(40,60,3)).astype(np.float32)
+        outputs=[]
+        with patch('kora.grain.film_grain',wraps=film_grain) as field:
+            for strength,exposure in [('weak',.5),('strong',1),('weak',1.5)]:
+                pixels=source*exposure
+                apply_film_grain(pixels,strength,'large',.25,(13,17))
+                outputs.append(pixels)
+            field.assert_called_once()
+            cached=_small_grain((40,60),'large',.25,(13,17))
+            self.assertFalse(cached.flags.writeable)
+            # Origin, scale, and grain size must remain part of the key.
+            for size,scale,origin in [('small',.25,(13,17)),('large',.5,(13,17)),('large',.25,(14,17))]:
+                apply_film_grain(source.copy(),'weak',size,scale,origin)
+            self.assertEqual(field.call_count,4)
+        # Compare against the uncached grain field on every exposure/strength.
+        with patch('kora.grain._small_grain',side_effect=film_grain):
+            for (strength,exposure),actual in zip([('weak',.5),('strong',1),('weak',1.5)],outputs):
+                expected=source*exposure
+                apply_film_grain(expected,strength,'large',.25,(13,17))
+                np.testing.assert_array_equal(actual,expected)
+        with patch('kora.grain._small_grain') as cached:
+            apply_film_grain(np.full((260,270,3),.5,np.float32),'weak','small')
+            cached.assert_not_called()
+        _small_grain.cache_clear()
+
     def test_strength_and_size_are_distinct_and_repeatable(self):
         for size in ('small','large'):
             weak=np.full((512,512,3),.5,np.float32)
