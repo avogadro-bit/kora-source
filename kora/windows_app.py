@@ -56,16 +56,20 @@ def run(roots, port, smoke_report=None):
         # Never fall back to the obsolete Internet Explorer renderer.
         def smoke_check():
             try:
+                from .studio import studio_status
+                status = studio_status()
+                expected_films = sorted(set(status['official_lut_films']) |
+                                        set(status['xm5_reference_validation']['films']))
                 window = controls.window
                 if not window.events.loaded.wait(30):
                     raise RuntimeError('WebView2 page did not load')
                 result = {}
                 for _ in range(100):
-                    result = window.evaluate_js("({title:document.title, films:document.querySelector('#film').options.length, grid:!!document.querySelector('#wb-grid')})")
-                    if result and result.get('films') == 10:
+                    result = window.evaluate_js("({title:document.title, films:Array.from(document.querySelector('#film').options, o=>o.value).sort(), grid:!!document.querySelector('#wb-grid')})")
+                    if result and result.get('films') == expected_films:
                         break
                     time.sleep(.1)
-                if result.get('title') != 'KŌRA' or result.get('films') != 10 or not result.get('grid'):
+                if result.get('title') != 'KŌRA' or result.get('films') != expected_films or not result.get('grid'):
                     raise RuntimeError(f'Unexpected Windows UI state: {result}')
                 Path(smoke_report).write_text(json.dumps(result), encoding='utf-8')
             except Exception as exc:

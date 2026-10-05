@@ -7,6 +7,9 @@ import tempfile
 import time
 from urllib.request import urlopen
 
+from kora import diagnostics
+from kora.studio import studio_status
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -41,9 +44,19 @@ def main():
         report = Path(directory) / 'ui-report.json'
         subprocess.run([str(app), '--root', directory, '--smoke-report', str(report)], check=True, timeout=60)
         result = json.loads(report.read_text(encoding='utf-8'))
-        assert result == {'title': 'KŌRA', 'films': 10, 'grid': True}, result
+        status = studio_status()
+        expected_films = sorted(set(status['official_lut_films']) |
+                                set(status['xm5_reference_validation']['films']))
+        assert result == {'title': 'KŌRA', 'films': expected_films, 'grid': True}, result
         print('Packaged WebView2 UI: OK')
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except Exception:
+        log = diagnostics.log_path()
+        if log.is_file():
+            print('Packaged application diagnostics:', flush=True)
+            print(log.read_text(encoding='utf-8')[-16000:], flush=True)
+        raise
