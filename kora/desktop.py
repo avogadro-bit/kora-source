@@ -5,8 +5,27 @@ from pathlib import Path
 import sys
 from kora import diagnostics
 
-from kora.gui import serve
 from kora.compatibility import browser_disabled
+
+
+def serve(*args, **kwargs):
+    # Native-library import failures must reach the startup handler as well.
+    from kora.gui import serve as serve_gui
+    return serve_gui(*args, **kwargs)
+
+
+def show_macos_startup_error():
+    from AppKit import NSAlert, NSApplication, NSApplicationActivationPolicyRegular
+    app = NSApplication.sharedApplication()
+    app.setActivationPolicy_(NSApplicationActivationPolicyRegular)
+    app.activateIgnoringOtherApps_(True)
+    alert = NSAlert.alloc().init()
+    alert.setMessageText_('KŌRA could not start')
+    alert.setInformativeText_(
+        'The application could not open its window. '
+        'Please share this diagnostic file when reporting the problem:\n\n' + str(log_path()))
+    alert.addButtonWithTitle_('Close')
+    alert.runModal()
 
 
 def log_path():
@@ -26,6 +45,7 @@ def main(argv=None):
     parser.add_argument("--no-browser", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--smoke-report", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
+    open_browser = False
     try:
         open_browser = not args.no_browser and not browser_disabled()
         if sys.platform == "win32" and open_browser:
@@ -47,6 +67,11 @@ def main(argv=None):
         if sys.platform == "win32" and not args.no_browser and not args.smoke_report:
             from kora.windows_app import show_startup_error
             show_startup_error()
+        elif sys.platform == 'darwin' and open_browser and getattr(sys, 'frozen', False):
+            try:
+                show_macos_startup_error()
+            except Exception as alert_error:
+                diagnostics.record_error('startup-alert', alert_error)
         return 2
 
 

@@ -14,6 +14,9 @@ components for debugging such modifications is imposed by KŌRA.
 ## Components and attribution
 
 - Python: Python Software Foundation license and included third-party notices.
+  macOS 0.2.41 uses python-build-standalone; its complete upstream license
+  directory is supplied under `runtime/python-build-standalone`. The inventory
+  records the exact matching upstream archive, build and checksum.
 - PyObjC core and Cocoa, Quartz, WebKit, Security and UniformTypeIdentifiers
   bindings: MIT license, Ronald Oussoren and contributors.
 - pywebview: BSD 3-Clause license; Bottle: MIT, with their included notices.

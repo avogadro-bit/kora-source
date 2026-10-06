@@ -8,6 +8,7 @@ from importlib.metadata import distribution
 from pathlib import Path, PurePosixPath
 import hashlib
 import json
+import platform
 import shutil
 import subprocess
 import sys
@@ -65,6 +66,61 @@ def download(item):
             'sha256': hashlib.file_digest(target.open('rb'), 'sha256').hexdigest()}
 
 
+def runtime_notices():
+    runtime_dir = DEST / 'runtime'
+    if runtime_dir.exists():
+        shutil.rmtree(runtime_dir)
+    prefix = Path(sys.base_prefix)
+    build_file = prefix / 'BUILD'
+    if sys.platform == 'darwin' and build_file.is_file():
+        # uv's install-only runtime omits the third-party license directory.
+        # Recover it from the matching full python-build-standalone archive,
+        # never from unrelated Homebrew libraries installed on the build Mac.
+        build = build_file.read_text().strip()
+        if not build.isdigit():
+            raise RuntimeError('Invalid Python standalone build identifier')
+        python_version = platform.python_version()
+        architecture = {'arm64': 'aarch64', 'x86_64': 'x86_64'}[platform.machine()]
+        triple = f'{architecture}-apple-darwin'
+        name = f'cpython-{python_version}-{build}-full.tar.zst'
+        url = (f'https://github.com/astral-sh/python-build-standalone/releases/download/{build}/'
+               f'cpython-{python_version}%2B{build}-{triple}-pgo%2Blto-full.tar.zst')
+        archive_path = ROOT / 'build' / 'runtime-archives' / name
+        archive_path.parent.mkdir(parents=True, exist_ok=True)
+        if not archive_path.is_file():
+            subprocess.run(['curl', '-fL', '--retry', '2', '--silent', '--show-error',
+                            url, '-o', str(archive_path)], check=True)
+        copied = []
+        with tarfile.open(archive_path) as archive:
+            metadata = json.load(archive.extractfile('python/PYTHON.json'))
+            if metadata['python_version'] != python_version or metadata['target_triple'] != triple:
+                raise RuntimeError('Python runtime notice archive does not match interpreter')
+            for member in archive:
+                path = PurePosixPath(member.name)
+                if member.isfile() and path.parts[:2] == ('python', 'licenses') and '..' not in path.parts:
+                    target = runtime_dir / 'python-build-standalone' / Path(*path.parts[2:])
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    with archive.extractfile(member) as stream, target.open('wb') as output:
+                        shutil.copyfileobj(stream, output)
+                    copied.append(str(target.relative_to(DEST)))
+        if not copied:
+            raise RuntimeError('Standalone Python archive has no dependency licenses')
+        return {'distribution': 'python-build-standalone', 'build': build, 'url': url,
+                'sha256': hashlib.file_digest(archive_path.open('rb'), 'sha256').hexdigest(),
+                'licenses': copied, 'minimum_macos': metadata['apple_sdk_deployment_target']}
+    runtime_licenses = {
+        'Python': prefix.parents[3] / 'LICENSE',
+        'OpenSSL': Path('/opt/homebrew/opt/openssl@3/LICENSE.txt'),
+        'zstd': Path('/opt/homebrew/opt/zstd/LICENSE'),
+        'mpdecimal': Path('/opt/homebrew/opt/mpdecimal/COPYRIGHT.txt'),
+    } if sys.platform == 'darwin' else {'Python': prefix / 'LICENSE.txt'}
+    for name, source in runtime_licenses.items():
+        target = runtime_dir / name / source.name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+    return {'distribution': 'Homebrew' if sys.platform == 'darwin' else 'python.org'}
+
+
 def main():
     DEST.mkdir(parents=True, exist_ok=True)
     SOURCES.mkdir(parents=True, exist_ok=True)
@@ -103,27 +159,22 @@ def main():
             raise RuntimeError(f'No installed license found: {name}')
         packages.append({'name': name, 'version': dist.version, 'licenses': copied,
                          'upstream': dist.metadata.get_all('Project-URL') or [dist.metadata.get('Home-page', '')]})
-    # These native libraries come from the release interpreter's Homebrew build.
-    runtime_licenses = {
-        'Python': Path(sys.base_prefix).parents[3] / 'LICENSE',
-        'OpenSSL': Path('/opt/homebrew/opt/openssl@3/LICENSE.txt'),
-        'zstd': Path('/opt/homebrew/opt/zstd/LICENSE'),
-        'mpdecimal': Path('/opt/homebrew/opt/mpdecimal/COPYRIGHT.txt'),
-    } if sys.platform == 'darwin' else {'Python': Path(sys.base_prefix) / 'LICENSE.txt'}
-    for name, source in runtime_licenses.items():
-        target = DEST / 'runtime' / name / source.name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, target)
+    runtime = runtime_notices()
     with ThreadPoolExecutor(max_workers=4) as pool:
         sources = list(pool.map(download, ARCHIVES.items()))
     for name, url in LICENSE_TEXTS.items():
         target = DEST / name
-        subprocess.run(['curl', '-fL', '--retry', '2', '--silent', '--show-error', url, '-o', str(target)], check=True)
+        cached = SOURCES / name
+        if cached.is_file() and cached.stat().st_size:
+            shutil.copyfile(cached, target)
+        else:
+            subprocess.run(['curl', '-fL', '--retry', '2', '--connect-timeout', '15',
+                            '--max-time', '90', '--silent', '--show-error', url, '-o', str(target)], check=True)
         shutil.copyfile(target, SOURCES/name)
     lens_database = ROOT / 'kora' / 'lensfun_db'
     for destination in (DEST, SOURCES):
         shutil.copytree(lens_database, destination/'lensfun-database', dirs_exist_ok=True)
-    manifest = {'python': sys.version.split()[0], 'packages': packages, 'native_sources': sources,
+    manifest = {'python': sys.version.split()[0], 'runtime': runtime, 'packages': packages, 'native_sources': sources,
                 'lens_database': json.loads((lens_database/'origin.json').read_text())}
     (DEST/'inventory.json').write_text(json.dumps(manifest, indent=2)+'\n')
     (SOURCES/'inventory.json').write_text(json.dumps(manifest, indent=2)+'\n')

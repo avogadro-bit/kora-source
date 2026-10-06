@@ -2,6 +2,17 @@
 
 Ces notes décrivent les étapes antérieures ; suivre README.md pour installer la version actuelle.
 
+## 0.2.41 — Compatibilité macOS et erreurs de démarrage
+
+Remplacement du moteur Python du paquet macOS : la version précédente contenait
+des composants exigeant macOS 15 ou 26 malgré le minimum annoncé de macOS 14.
+La construction vérifie désormais la compatibilité de chaque composant natif.
+Les erreurs de démarrage affichent une alerte et l'attente du service local est
+limitée à 30 secondes. Les bibliothèques de traitement photo gardent leurs versions.
+Le blocage signalé sur un MacBook Air sous Tahoe 26.6.2 reste à diagnostiquer :
+le défaut de version minimale ne suffit pas à l'expliquer.
+[Validation et limites](docs/RELEASE_NOTES_0.2.41.md).
+
 ## 0.2.40 — Sélecteur de simulations mieux délimité
 
 Encadré plus visible autour du choix de film : fond légèrement éclairci,

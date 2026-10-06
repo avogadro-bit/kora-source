@@ -42,3 +42,23 @@ class DesktopTests(unittest.TestCase):
              patch("kora.desktop.log_path", return_value=Path(root) / "app.log"):
             self.assertEqual(desktop.main(["--no-browser"]), 2)
             self.assertIn("RuntimeError: boom", (Path(root) / "app.log").read_text())
+
+    def test_native_startup_failure_shows_mac_alert(self):
+        with patch.object(desktop.sys, 'frozen', True, create=True), \
+                patch.object(desktop.sys, 'platform', 'darwin'), \
+                patch.dict('sys.modules', {'kora.macos_app': SimpleNamespace(
+                    run=lambda *_: (_ for _ in ()).throw(ImportError('native library failed')))}), \
+                patch.object(desktop, 'record_crash') as record, \
+                patch.object(desktop, 'show_macos_startup_error') as alert:
+            self.assertEqual(desktop.main([]), 2)
+        record.assert_called_once()
+        alert.assert_called_once()
+
+    def test_headless_failure_does_not_show_mac_alert(self):
+        with patch.object(desktop.sys, 'frozen', True, create=True), \
+                patch.object(desktop.sys, 'platform', 'darwin'), \
+                patch.object(desktop, 'serve', side_effect=ImportError('native library failed')), \
+                patch.object(desktop, 'record_crash'), \
+                patch.object(desktop, 'show_macos_startup_error') as alert:
+            self.assertEqual(desktop.main(['--no-browser']), 2)
+        alert.assert_not_called()

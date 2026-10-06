@@ -39,6 +39,19 @@ def main():
     if architecture not in {"arm64", "x86_64"}:
         raise SystemExit(f"Unsupported macOS architecture: {architecture}")
 
+    # A deployment-target environment variable cannot make an existing runtime
+    # compatible with older systems. Reject it before removing previous builds.
+    from audit_macos_bundle import inspect_binary
+    from PyInstaller.depend.bindepend import get_python_library_path
+    runtime = get_python_library_path()
+    if runtime is None:
+        raise SystemExit('Could not locate the Python runtime library.')
+    runtime_check = inspect_binary(runtime, '14.0', architecture)
+    # The unfrozen runtime still has absolute install names. PyInstaller relocates
+    # them; the complete bundle is checked again below.
+    if any('requires macOS' in issue or 'missing ' in issue for issue in runtime_check['problems']):
+        raise SystemExit(f"Incompatible Python runtime: {runtime_check['problems']}")
+
     work = ROOT / "build" / "pyinstaller"
     app_dist = ROOT / "dist" / "macos"
     release = ROOT / "dist" / "release"
@@ -64,6 +77,8 @@ def main():
     app = app_dist / "KŌRA.app"
     if not app.is_dir():
         raise SystemExit(f"Application bundle was not produced: {app}")
+    run(sys.executable, ROOT / 'scripts' / 'audit_macos_bundle.py', app,
+        '--architecture', architecture, '--report', ROOT / 'build' / 'macos-compatibility.json')
     # Ad-hoc signing catches altered nested binaries and avoids an entirely
     # unsigned bundle. Public notarization still requires an Apple Developer ID.
     run("codesign", "--force", "--deep", "--sign", "-", app)

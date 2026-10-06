@@ -6,6 +6,8 @@ from .gui import serve
 from .diagnostics import record_error
 from .compatibility import mac_webview_directory
 
+STARTUP_TIMEOUT = 30
+
 
 class WindowControls:
     """Window-only control called through the session-authenticated HTTP API."""
@@ -24,27 +26,39 @@ def run(roots, port):
     import webview
 
     ready = threading.Event()
+    state_lock = threading.Lock()
     state = {}
     controls = WindowControls()
 
     def on_ready(server, url):
-        server.toggle_fullscreen = controls.toggle_fullscreen
-        state.update(server=server, url=url)
-        ready.set()
+        with state_lock:
+            if state.get('cancelled'):
+                # serve() closes its socket when this callback raises.
+                raise TimeoutError('Application startup was cancelled')
+            server.toggle_fullscreen = controls.toggle_fullscreen
+            state.update(server=server, url=url)
+            ready.set()
 
     def worker():
         try:
             serve(roots, port, on_ready=on_ready)
+            if not ready.is_set():
+                raise RuntimeError('Local service stopped before it was ready')
         except Exception as exc:
             record_error('native-server-worker', exc)
-            state['error'] = exc
-            ready.set()
+            with state_lock:
+                state['error'] = exc
+                ready.set()
 
     thread = threading.Thread(target=worker, name="KoraServer", daemon=True)
     thread.start()
-    ready.wait()
-    if 'error' in state:
-        raise state['error']
+    ready.wait(STARTUP_TIMEOUT)
+    with state_lock:
+        if not ready.is_set():
+            state['cancelled'] = True
+            raise TimeoutError('The local service did not start within 30 seconds')
+        if 'error' in state:
+            raise state['error']
     try:
         webview.settings['ALLOW_DOWNLOADS'] = True
         webview.settings['ALLOW_FILE_URLS'] = False

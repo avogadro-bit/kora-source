@@ -27,7 +27,7 @@ redistributed by this project. See [macOS release and Gatekeeper notes](docs/MAC
 
 Python **3.11 or newer** is required for development. The public application download is currently macOS only.
 
-[Download KŌRA 0.2.40 for macOS](https://github.com/avogadro-bit/kora-source/releases/tag/v0.2.40).
+[Download KŌRA 0.2.41 for macOS](https://github.com/avogadro-bit/kora-source/releases/tag/v0.2.41).
 
 The Python module and command are named `kora`. Existing LUT directories and saved
 macOS settings are detected automatically. Legacy identifiers are isolated in

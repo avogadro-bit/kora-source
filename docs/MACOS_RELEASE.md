@@ -27,16 +27,40 @@ wide public distribution.
 
 ## Maintainer build
 
-Use a clean build environment so unrelated Python packages are not bundled:
+Use a clean, portable interpreter so the app does not inherit the build Mac's
+minimum OS version. In 0.2.40, Homebrew's Python and several bundled extensions
+required macOS 26 even though the app advertised macOS 14. Setting
+`MACOSX_DEPLOYMENT_TARGET` or changing the app's plist does not repair prebuilt
+libraries. The 0.2.41 build uses python-build-standalone 3.14.8, build 20261003
+(the runtime targets macOS 11; KŌRA and its other dependencies require macOS 14).
+
+Install a current [uv](https://docs.astral.sh/uv/) and build in isolation:
 
 ```bash
-python3 -m venv .venv-release
-.venv-release/bin/python -m pip install -e '.[release,optics]'
-.venv-release/bin/python scripts/prepare_release_notices.py
-.venv-release/bin/python scripts/build_macos_release.py
+uv python install 3.14.8 --install-dir .venv-runtimes --no-bin
+uv venv --python .venv-runtimes/cpython-3.14.8-macos-aarch64-none/bin/python3 .venv-macos-release
+uv pip install --python .venv-macos-release/bin/python -c packaging/requirements-macos.txt -e '.[release,optics]' build
+.venv-macos-release/bin/python scripts/prepare_release_notices.py
+.venv-macos-release/bin/python scripts/build_macos_release.py
 ```
 
 The script builds and verifies the `.app`, then creates a ZIP, a DMG, dependency
 source and notice ZIPs, and `SHA256SUMS.txt` under `dist/release/`. PyInstaller targets the architecture of
 the Python interpreter used for the build. Build once on Apple Silicon and once
 on Intel to publish both native variants.
+
+The build checks the interpreter before removing earlier build outputs, then
+audits every Mach-O file in the completed bundle. It rejects a minimum OS newer
+than `LSMinimumSystemVersion`, missing native architectures, and absolute library
+references outside macOS system libraries. The report is saved in
+`build/macos-compatibility.json`. This verifies declared binary compatibility;
+launch testing on the oldest supported macOS remains necessary.
+
+## Startup diagnostics
+
+Native startup exceptions now display an alert with the diagnostic file location.
+The local service has a 30-second startup deadline instead of leaving the main
+thread waiting indefinitely before opening a window. A late service is cancelled.
+The diagnostic location is `~/Library/Logs/KŌRA/errors.jsonl`, or the legacy
+`~/Library/Logs/Film Recipe Lab/errors.jsonl` if that directory already exists.
+Failures before Python itself loads must still be examined in macOS crash reports.
