@@ -85,6 +85,10 @@ def run(roots, port, smoke_report=None):
                     time.sleep(.1)
                 if result.get('title') != 'KŌRA' or result.get('films') != expected_films or not result.get('grid'):
                     raise RuntimeError(f'Unexpected Windows UI state: {result}')
+                from .windows_smoke import check_raw
+                raw_result = check_raw(state['server'], roots)
+                if raw_result is not None:
+                    result['raw'] = raw_result
                 Path(smoke_report).write_text(json.dumps(result), encoding='utf-8')
             except Exception as exc:
                 state['error'] = exc

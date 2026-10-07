@@ -43,6 +43,13 @@ python -m venv .venv-windows
 ```
 
 The Windows workflow builds on a real Windows runner, runs tests and a packaged
-server and native WebView2 smoke tests, and uploads artifacts for review. It does not publish a release
+server and native WebView2 smoke tests, and uploads artifacts for review. The
+packaged executable also develops a checksum-verified public Canon CR2 sample,
+renders PROVIA, Classic Negative and Pro Neg. Hi previews, serves a source-detail tile,
+and exports a full-resolution JPEG with an ICC profile. The sample is downloaded
+from rawpy's test data (rawsamples.ch, CC BY-NC-SA 4.0), used temporarily and never
+included in the application or release artifacts. The official LUT pack is also
+downloaded from Fujifilm, verified and installed only in the temporary test
+directory. It is never added to the package. The workflow does not publish a release
 automatically. A real-user visual check and RAW/export test remain necessary
 before declaring the Windows build production-ready.

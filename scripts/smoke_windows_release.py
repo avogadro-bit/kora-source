@@ -1,5 +1,7 @@
 """Start the packaged server, verify its assets/API, then stop our own process."""
+import hashlib
 import json
+import os
 from pathlib import Path
 import socket
 import subprocess
@@ -9,8 +11,16 @@ from urllib.request import urlopen
 
 from kora import diagnostics
 from kora.studio import studio_status
+from kora.lut_install import install_archive
+from kora.official_luts import MANIFEST
 
 ROOT = Path(__file__).resolve().parents[1]
+
+# Public regression sample from rawpy / rawsamples.ch, CC BY-NC-SA 4.0.
+# Downloaded into the temporary test directory; never bundled with Kora.
+RAW_URL = ('https://raw.githubusercontent.com/letmaik/rawpy/'
+           'a39c2e7a44911889c3360891012f862f904ba551/test/RAW_CANON_40D_SRAW_V103.CR2')
+RAW_SHA256 = '152382ce4dbf644899d12b41b4c577f07638aa3ec5745ac344c36bad93826125'
 
 
 def main():
@@ -42,13 +52,29 @@ def main():
             process.terminate()
             process.wait(timeout=15)
         report = Path(directory) / 'ui-report.json'
-        subprocess.run([str(app), '--root', directory, '--smoke-report', str(report)], check=True, timeout=60)
+        with urlopen(RAW_URL, timeout=60) as response:
+            sample = response.read()
+        assert hashlib.sha256(sample).hexdigest() == RAW_SHA256, 'RAW sample checksum changed'
+        (Path(directory) / 'sample.CR2').write_bytes(sample)
+        # Exercise the normal first-run LUT installation without redistributing
+        # vendor files: the complete pack and extracted tables stay temporary.
+        lut_archive = Path(directory) / 'fuji-luts.zip'
+        with urlopen(MANIFEST['source'], timeout=120) as response:
+            lut_archive.write_bytes(response.read())
+        lut_directory = install_archive(lut_archive, Path(directory) / 'luts')
+        subprocess.run([str(app), '--root', directory, '--smoke-report', str(report)],
+                       env={**os.environ, 'KORA_LUT_DIR': str(lut_directory)},
+                       check=True, timeout=240)
         result = json.loads(report.read_text(encoding='utf-8'))
         status = studio_status()
         expected_films = sorted(set(status['official_lut_films']) |
                                 set(status['xm5_reference_validation']['films']))
-        assert result == {'title': 'KŌRA', 'films': expected_films, 'grid': True}, result
-        print('Packaged WebView2 UI: OK')
+        assert {key: result[key] for key in ('title', 'films', 'grid')} == {
+            'title': 'KŌRA', 'films': expected_films, 'grid': True}, result
+        assert result['raw']['export'] == [1944, 1296], result
+        assert result['raw']['icc'], result
+        print('Packaged WebView2 UI, RAW previews, source-detail tile and JPEG export: OK')
+        print(json.dumps(result['raw']))
 
 
 if __name__ == '__main__':
