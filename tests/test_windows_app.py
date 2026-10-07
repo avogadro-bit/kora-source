@@ -102,3 +102,38 @@ class WindowsLifecycleTests(unittest.TestCase):
                 patch.object(platform_support.ctypes, 'windll', SimpleNamespace(kernel32=kernel), create=True):
             self.assertEqual(platform_support.physical_memory_bytes(), 32 * 1024**3)
             self.assertEqual(platform_support.drive_roots(), [Path('C:/'), Path('D:/')])
+
+    def test_stalled_startup_times_out_and_rejects_late_server(self):
+        release = threading.Event()
+        finished = threading.Event()
+        webview = Mock()
+        rejected = []
+
+        def serve(roots, port, on_ready):
+            release.wait(5)
+            try:
+                on_ready(Mock(), 'http://127.0.0.1:8877/')
+            except TimeoutError:
+                rejected.append(True)
+                raise
+            finally:
+                finished.set()
+
+        with patch.dict('sys.modules', {'webview': webview}), \
+                patch.object(windows_app, 'serve', side_effect=serve), \
+                patch.object(windows_app, 'record_error'), \
+                patch.object(windows_app, 'STARTUP_TIMEOUT', 0.01):
+            try:
+                with self.assertRaisesRegex(TimeoutError, 'did not start'):
+                    windows_app.run([], 8877)
+            finally:
+                release.set()
+                self.assertTrue(finished.wait(2))
+        self.assertEqual(rejected, [True])
+        webview.create_window.assert_not_called()
+
+    def test_worker_exit_before_ready_is_reported(self):
+        with patch.dict('sys.modules', {'webview': Mock()}), \
+                patch.object(windows_app, 'serve'), patch.object(windows_app, 'record_error'):
+            with self.assertRaisesRegex(RuntimeError, 'stopped before it was ready'):
+                windows_app.run([], 8877)

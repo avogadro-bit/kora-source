@@ -9,6 +9,8 @@ from .diagnostics import record_error
 from .gui import serve
 from .platform_support import windows_data_directory as data_directory
 
+STARTUP_TIMEOUT = 30
+
 
 class WindowControls:
     def __init__(self):
@@ -23,27 +25,39 @@ def run(roots, port, smoke_report=None):
     import webview
 
     ready = threading.Event()
+    state_lock = threading.Lock()
     state = {}
     controls = WindowControls()
 
     def on_ready(server, url):
-        server.toggle_fullscreen = controls.toggle_fullscreen
-        state.update(server=server, url=url)
-        ready.set()
+        with state_lock:
+            if state.get('cancelled'):
+                # serve() closes its socket when this callback raises.
+                raise TimeoutError('Application startup was cancelled')
+            server.toggle_fullscreen = controls.toggle_fullscreen
+            state.update(server=server, url=url)
+            ready.set()
 
     def worker():
         try:
             serve(roots, port, on_ready=on_ready)
+            if not ready.is_set():
+                raise RuntimeError('Local service stopped before it was ready')
         except Exception as exc:
             record_error('windows-server-worker', exc)
-            state['error'] = exc
-            ready.set()
+            with state_lock:
+                state['error'] = exc
+                ready.set()
 
     thread = threading.Thread(target=worker, name='KoraServer', daemon=True)
     thread.start()
-    ready.wait()
-    if 'error' in state:
-        raise state['error']
+    ready.wait(STARTUP_TIMEOUT)
+    with state_lock:
+        if not ready.is_set():
+            state['cancelled'] = True
+            raise TimeoutError('The local service did not start within 30 seconds')
+        if 'error' in state:
+            raise state['error']
     try:
         storage = data_directory() / 'WebView'
         storage.mkdir(parents=True, exist_ok=True)
@@ -90,7 +104,8 @@ def run(roots, port, smoke_report=None):
 
 def show_startup_error():
     ctypes.windll.user32.MessageBoxW(
-        None, 'KŌRA could not start. Install Microsoft Edge WebView2 Runtime '
-        'and try again. If it is already installed, check the error log in '
-        '%LOCALAPPDATA%\\Kora\\Logs.', 'KŌRA', 0x10,
+        None, 'KŌRA could not start. Details were saved in:\n'
+        f'{data_directory() / "Logs" / "errors.jsonl"}\n\n'
+        'KŌRA requires Microsoft Edge WebView2 Runtime and .NET Framework 4.8. '
+        'If either is missing, install it and try again.', 'KŌRA', 0x10,
     )

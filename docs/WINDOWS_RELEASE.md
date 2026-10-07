@@ -2,13 +2,21 @@
 
 Windows 10/11 x64 (Intel or AMD), Microsoft Edge WebView2 Evergreen Runtime,
 and .NET Framework 4.8 are required. Python is bundled; no Python installation
-is needed to run the packaged app. Windows ARM64 is not a native build target.
+is needed to run the packaged app. On Windows 11 ARM64, including UTM on
+Apple Silicon, this x64 build uses Windows' built-in emulation. It is not a
+native ARM64 build; performance there does not represent an Intel/AMD PC.
 
 Extract the entire Kora ZIP to a writable folder, then launch `Kora.exe`.
 Do not run the executable inside the ZIP or separate it from `_internal`.
 The app opens full screen. Use the fullscreen button to return to a window.
 Closing the window stops its local service. This build is not code-signed;
 Windows may display a publisher warning. Only use downloads you trust.
+
+This evaluation includes the rendering, high-resolution previews, zoom,
+film choices and optical corrections from KŌRA 0.2.41. The Windows shell
+uses WebView2 with its own settings folder. A stalled local service is
+reported after 30 seconds instead of waiting indefinitely. Startup logging
+also supports Windows consoles whose encoding cannot display the KŌRA name.
 
 Install the official LUT pack through Setup as on macOS. LUTs and firmware
 are not bundled. Images are processed locally and originals are not modified.
@@ -35,6 +43,6 @@ python -m venv .venv-windows
 ```
 
 The Windows workflow builds on a real Windows runner, runs tests and a packaged
-server smoke test, and uploads artifacts for review. It does not publish a release
+server and native WebView2 smoke tests, and uploads artifacts for review. It does not publish a release
 automatically. A real-user visual check and RAW/export test remain necessary
 before declaring the Windows build production-ready.
