@@ -2,6 +2,13 @@
 
 Ces notes décrivent les étapes antérieures ; suivre README.md pour installer la version actuelle.
 
+## 0.2.42 — Kodachrome 64 expérimental
+
+Ajout du modèle spectral E-88 comme film spécial intégré : méthode pente,
+observation D50, repère +0,5 EV. Aperçu, zoom et exports utilisent le même
+calcul accéléré. Les simulations Fuji et le film par défaut restent inchangés.
+[Utilisation et limites](docs/KODACHROME64.md).
+
 ## 0.2.41 — Compatibilité macOS et erreurs de démarrage
 
 Remplacement du moteur Python du paquet macOS : la version précédente contenait

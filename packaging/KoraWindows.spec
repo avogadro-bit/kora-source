@@ -6,7 +6,7 @@ root = Path(SPEC).resolve().parent.parent
 notices = root / 'build' / 'release-notices'
 if not (notices / 'inventory.json').is_file():
     raise RuntimeError('Run scripts/prepare_release_notices.py first')
-datas = collect_data_files('kora', includes=['static/*', 'luts/*.json', 'lensfun_db/*'])
+datas = collect_data_files('kora', includes=['film_data/*', 'static/*', 'luts/*.json', 'lensfun_db/*'])
 datas += collect_data_files('webview')
 datas += [(str(root / 'LICENSE'), '.'), (str(root / 'THIRD_PARTY.md'), '.'),
           (str(notices), 'Third-Party-Notices')]

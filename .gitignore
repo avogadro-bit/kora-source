@@ -68,3 +68,6 @@ graphify-out/
 *.[sS][rR]2
 *.[sS][rR][fF]
 *.[sS][rR][wW]
+
+# Reproducible scientific tables; no photograph pixels.
+!kora/film_data/kodachrome64_v1.npz

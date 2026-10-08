@@ -12,7 +12,7 @@ import rawpy
 from scipy.ndimage import gaussian_filter
 import tifffile
 from .input_profiles import RAW_EXTENSIONS, validate_linear_input, normalization_details, apply_input_color
-from .recipe import Recipe
+from .recipe import Recipe, FujiFilm
 from .grain import apply_film_grain
 from .fuji_tone import apply_fuji_tone
 from .highlight_recovery import (bayer_clipping, recover_camera_highlights,
@@ -21,11 +21,12 @@ from .raw import require_local, exif
 from .source_exposure import source_exposure, estimate_reference_ev
 from .source_white_balance import source_white_balance, fuji_shift
 from .camera_white_balance import apply_sensor_gains
-from .official_luts import FILMS as OFFICIAL_FILMS, apply_official, run_parallel_rows
+from .official_luts import FILMS as OFFICIAL_FILMS, apply_official, run_parallel_rows, MissingLUTError
 from .recipe_effects import wb_shift_gains, chrome_effect, dynamic_range_compress, linear_tone_curve, selective_tone_detail, preserve_film_hue
 
 
 class StudioRecipe(Recipe):
+    film: FujiFilm | Literal['kodachrome64'] = 'provia'
     highlight_tone: float = Field(default=0, ge=-2, le=4, multiple_of=.5)
     shadow_tone: float = Field(default=0, ge=-2, le=4, multiple_of=.5)
     highlights: float = Field(default=0, ge=-100, le=100)
@@ -56,6 +57,7 @@ def studio_status():
             'missing_luts':missing_luts(),
             'calibrated_against_fuji':False,'default_film':'provia',
             'official_lut_films':list(OFFICIAL_FILMS),
+            'special_films':{'kodachrome64':{'experimental':True,'model_version':1,'base_ev':.5}},
             'lut_source':'FUJIFILM GFX ETERNA 55 v1.10',
             'photo_adapter_calibrated':False,'recipe_response_revision':24,
             'tone_reference':{'camera':'X-M5','firmware':'1.20','film':'classic_negative',
@@ -186,8 +188,13 @@ def _cached_preview_source(path,mtime,size):
         # new camera-style tone controls must not silently re-expose old RAWs.
         if path.suffix.lower()=='.raf':settings.update(shooting_settings(metadata, legacy_tone=True))
         ref_recipe=StudioRecipe(**settings)
-        match=estimate_reference_ev(resize_float(anchor,256),reference,
-                                    lambda a:render(a,ref_recipe,context={'source_exposure_anchor':True}))
+        try:
+            match=estimate_reference_ev(resize_float(anchor,256),reference,
+                                        lambda a:render(a,ref_recipe,context={'source_exposure_anchor':True}))
+        except MissingLUTError:
+            # Built-in films can use the metadata exposure anchor without
+            # the optional Fuji pack. Other LUT errors still surface.
+            match['reason']='Embedded exposure match unavailable without the source Fuji LUT'
     info={**info,**match,'metadata_ev':info.get('baseline_ev',info['ev'])}
     info['ev']+=match['reference_ev'];info['gain']=2**info['ev']
     linear*=2**match['reference_ev']
@@ -333,7 +340,14 @@ def render(linear, r, neutral=False, *, output_transform=True, context=None, ori
     # Film adaptations use that space; camera-specific WB stays upstream.
     reference_film=r.film in ('pro_neg_hi','nostalgic_negative','classic_negative')
     film_reference=None
-    if reference_film:
+    if r.film=='kodachrome64':
+        from .kodachrome import apply_kodachrome
+        a=apply_kodachrome(a,r.exposure)
+        if stabilize_color:
+            film_reference=apply_kodachrome(color_input,r.exposure)
+            a=preserve_film_hue(film_reference,a)
+        sat=1.
+    elif reference_film:
         from .xm5_film import apply_reference_film
         a=apply_reference_film(a,r.film)
         if stabilize_color:
@@ -444,11 +458,15 @@ def encode(a,r,preview=False,*,detail=False):
         im=Image.fromarray(_integer_pixels(a,np.uint8))
         im.save(buf,'JPEG',quality=(96 if detail else 90) if preview else (96 if r.image_quality=='fine' else 82),
             subsampling=0 if preview and detail else -1,icc_profile=icc,
-            comment=('KŌRA: '+('official GFX ETERNA 55 LUT; uncalibrated photo adapter' if r.film in OFFICIAL_FILMS else 'independent artistic look')).encode())
+            comment=('KŌRA: '+('experimental Kodachrome 64; E-88 spectral approximation' if r.film=='kodachrome64' else 'official GFX ETERNA 55 LUT; uncalibrated photo adapter' if r.film in OFFICIAL_FILMS else 'independent artistic look')).encode())
         return buf.getvalue(),'image/jpeg'
+    metadata={'renderer':'official-lut-photo-adapter-v1','recipe_response_revision':24,'official_lut':r.film if r.film in OFFICIAL_FILMS else None,'exact_fuji_render':False,'recipe':r.model_dump()}
+    if r.film=='kodachrome64':
+        from .kodachrome import model_info
+        metadata.update(renderer='kodachrome64-spectral-v1',experimental=True,kodachrome=model_info())
     dtype=np.uint16 if r.file_type=='tiff16' else np.uint8
     tifffile.imwrite(buf,_integer_pixels(a,dtype),photometric='rgb',metadata=None,
-        description=json.dumps({'renderer':'official-lut-photo-adapter-v1','recipe_response_revision':24,'official_lut':r.film if r.film in OFFICIAL_FILMS else None,'exact_fuji_render':False,'recipe':r.model_dump()}),
+        description=json.dumps(metadata),
         extratags=[(34675,'B',len(icc),icc,False)])
     return buf.getvalue(),'image/tiff'
 

@@ -1,0 +1,18 @@
+{
+  "source": "https://cie.co.at/datatable/cie-standard-illuminant-d50",
+  "files": [
+    {
+      "file": "CIE_std_illum_D50.csv",
+      "url": "https://files.cie.co.at/Publications-datasets/CIE_std_illum_D50.csv",
+      "sha256": "b23049c6f7b266c1c1fbe147aa271e8930ca02d6e569c5ae1804c036faea4193",
+      "md5": "e72757c3078b58e78ba63051be4b27b0"
+    },
+    {
+      "file": "CIE_std_illum_D50.csv_metadata.json",
+      "url": "https://files.cie.co.at/Publications-datasets/CIE_std_illum_D50.csv_metadata.json",
+      "sha256": "6a821a681da65f9d5da5341ef52d190a56d7ea02ba086f4a3af1d9536cfb6f3b",
+      "md5": "01474c8440e3032ccc919b3228a7efa9"
+    }
+  ],
+  "official_hashes_verified": true
+}

@@ -29,6 +29,7 @@ const films = [
  ["pro_neg_hi","PRO Neg. Hi","Higher-contrast portrait color."], ["eterna","ETERNA / Cinema","A soft palette inspired by cinema."],
  ["eterna_bleach","ETERNA Bleach Bypass","Strong contrast and muted color."], ["nostalgic_negative","Nostalgic Negative","Warm tones with a nostalgic character."],
  ["reala_ace","REALA ACE","Natural color with clear tonal separation."], ["acros","ACROS","Silver-halide-inspired black and white tonality."],
+ ["kodachrome64","Kodachrome 64 · Experimental","A special film based on our experimental Kodak E-88 model."],
  ["monochrome","Monochrome","A classic black and white rendering."], ["sepia","Sepia","Brown-toned monochrome."]
 ];
 const officialFilms = new Set(["provia","velvia","astia","classic_chrome","classic_negative","pro_neg_std","eterna","eterna_bleach","reala_ace","acros"]);
@@ -146,13 +147,14 @@ function drawWBGrid(){
  canvas.setAttribute("aria-description",`Red ${recipe.wb_red}, Blue ${recipe.wb_blue}`);
 }
 const referenceFilms=new Set(["pro_neg_hi","nostalgic_negative","classic_negative"]);
+const specialFilms=new Set(["kodachrome64"]);
 function hasReferenceFilm(film){return referenceFilms.has(film);}
-function filmSourceLabel(film){return hasReferenceFilm(film)?"PHOTO APPROXIMATION":officialFilms.has(film)?"FUJIFILM LUT":"INTERPRETATION";}
+function filmSourceLabel(film){return specialFilms.has(film)?"SPECIAL FILM":hasReferenceFilm(film)?"PHOTO APPROXIMATION":officialFilms.has(film)?"FUJIFILM LUT":"INTERPRETATION";}
 function syncFilmChoices(currentFilm){
  const menu=$("#film");menu.replaceChildren();
- for(const [v,t] of films){if(!officialFilms.has(v)&&!hasReferenceFilm(v))continue;const o=element("option",t);o.value=v;menu.append(o);}
+ for(const [v,t] of films){if(!officialFilms.has(v)&&!hasReferenceFilm(v)&&!specialFilms.has(v))continue;const o=element("option",t);o.value=v;menu.append(o);}
  // Preserve legacy recipes without offering their retired simulations for selection.
- if(currentFilm&&!officialFilms.has(currentFilm)&&!hasReferenceFilm(currentFilm)){
+ if(currentFilm&&!officialFilms.has(currentFilm)&&!hasReferenceFilm(currentFilm)&&!specialFilms.has(currentFilm)){
   const name=films.find(f=>f[0]===currentFilm)?.[1]||currentFilm;
   const o=element("option",name+" · legacy recipe (retired)");o.value=currentFilm;o.disabled=true;menu.append(o);
  }
@@ -187,7 +189,7 @@ function populate(){
  drawWBGrid();updateOpticsStatus();
  for(const input of document.querySelectorAll("[data-key]")){input.value=recipe[input.dataset.key] ?? defaults[input.dataset.key];const out=document.querySelector(`[data-output="${input.dataset.key}"]`);if(out)out.textContent=Number(input.value)>0&&input.dataset.key!=="kelvin"?"+"+input.value:input.value;}
  for(const input of document.querySelectorAll("[data-tone-value]")){input.value=recipe[input.dataset.toneValue];input.disabled=recipe.dr_priority!=="off";}
- $("#film-description").textContent=hasReferenceFilm(recipe.film)?"Photo approximation based on X-M5 references · adapted to your RAW.":officialFilms.has(recipe.film)?"Official Fujifilm LUT · GFX ETERNA 55 · uncalibrated photo adaptation.":"Independent interpretation · this film has no LUT in the official pack.";
+ $("#film-description").textContent=specialFilms.has(recipe.film)?"Experimental Kodachrome 64 from published Kodak curves. Adjust Push / Pull to your photo.":hasReferenceFilm(recipe.film)?"Photo approximation based on X-M5 references · adapted to your RAW.":officialFilms.has(recipe.film)?"Official Fujifilm LUT · GFX ETERNA 55 · uncalibrated photo adaptation.":"Independent interpretation · this film has no LUT in the official pack.";
  const unsupported=recipe.target_model==="X-T4"&&["reala_ace","nostalgic_negative"].includes(recipe.film);
  $("#validation-note").textContent=unsupported?"This simulation is unavailable on the X-T4.":"";
  $("#control-kelvin").disabled=recipe.wb!=="kelvin";

@@ -9,7 +9,7 @@ function setup(){
 }
 test('official and reference-based films are selectable without a Fuji source',()=>{
  const {menu,update}=setup();update('classic_negative');
- assert.equal(menu.children.length,12);
+ assert.equal(menu.children.length,13);
  assert.equal(menu.value,'classic_negative');
  for(const film of ['classic_negative','pro_neg_hi','nostalgic_negative']){
   const option=menu.children.find(o=>o.value===film);
@@ -20,8 +20,15 @@ test('official and reference-based films are selectable without a Fuji source',(
 test('legacy recipes remain identifiable but cannot be selected again',()=>{
  const {menu,update}=setup();
  for(const retired of ['monochrome','sepia']){
-  update(retired);assert.equal(menu.children.length,13);assert.equal(menu.value,retired);
+  update(retired);assert.equal(menu.children.length,14);assert.equal(menu.value,retired);
   const legacy=menu.children.find(o=>o.value===retired);assert.equal(legacy.disabled,true);assert.match(legacy.text,/legacy recipe/);
  }
- update('provia');assert.equal(menu.children.length,12);assert.equal(menu.value,'provia');
+ update('provia');assert.equal(menu.children.length,13);assert.equal(menu.value,'provia');
+});
+
+test('Kodachrome is a selectable, explicitly experimental special film',()=>{
+ const {menu,update}=setup();update('kodachrome64');
+ const film=menu.children.find(o=>o.value==='kodachrome64');
+ assert.equal(film.disabled,false);assert.match(film.text,/Experimental/);
+ assert.equal(menu.value,'kodachrome64');assert.equal(menu.children.length,13);
 });

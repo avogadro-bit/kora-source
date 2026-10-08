@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "film": "kodachrome64",
+  "label": "Kodachrome 64 \u00b7 Experimental",
+  "sha256": "032471d4805a6d22da127d98bc8ab422cf3d4159a745ed28dd8396ce2b01da03",
+  "method": "minimum first-derivative quadratic (pente)",
+  "scene_illuminant": "D65",
+  "viewing_illuminant": "D50",
+  "observation_adaptation": "full Bradford of lamp white to sRGB D65",
+  "base_ev": 0.5,
+  "sensitivity_tails": "zero",
+  "dye_tails": "hold",
+  "response_grid": 65,
+  "response_interpolation": "tetrahedral in linear RGB",
+  "dye_grid": 65,
+  "dye_lut_check": {
+    "size": 65,
+    "samples": 4096,
+    "seed": 6403,
+    "max_abs_linear_rgb_error": 0.0014314542433090383,
+    "max_abs_encoded_srgb_error": 0.0018377115603701345
+  },
+  "reference_files_sha256": {
+    "SOURCES.txt": "de4ad6c40476e912791ffc3cc82f9c7a5da06c6b293fc4ffcec8f2c2f67ce07c",
+    "data/characteristic.csv": "a11df2ce80d5007212a65507f5e34cfb3c13a045ed5e44c43a8ce17af8e84dbb",
+    "data/dyes.csv": "395fff2e6e24eaa6f1f05d6708fedf9500ceaed994da24a67086da8feb95dbfb",
+    "data/sensitivity.csv": "279cefc96cf753ef5ce5eaa688a03df788a5a6a0b7591e2cca0f7f680d9ac0e7",
+    "data/source/CIE_std_illum_D50.csv": "b23049c6f7b266c1c1fbe147aa271e8930ca02d6e569c5ae1804c036faea4193",
+    "data/source/CIE_std_illum_D50.csv_metadata.json": "6a821a681da65f9d5da5341ef52d190a56d7ea02ba086f4a3af1d9536cfb6f3b",
+    "data/source/CIE_std_illum_D65.csv": "e76f210bffff3d552ef7113025da5f325d5dfec200dd4b878b1a2f3a507032cb",
+    "data/source/CIE_std_illum_D65.csv_metadata_v2.json": "71994379b81c65db111f652e747a00b599b5456c2a8242e9a0d6f379f560a14e",
+    "data/source/CIE_xyz_1931_2deg.csv": "fa663e3535a7e0763a745993a1f0a192eb0275ac46ad2d1befd7626841e713c1",
+    "data/source/CIE_xyz_1931_2deg.csv_metadata.json": "03abcaecf4e63d77045ef57c4514b52c8bb1a46dd18e1f93a50044a0f4f481c8",
+    "data/source/COLORMATH_LICENSE.txt": "e651e9423fb7a8621ade20490473bfe18c1a824209cb0cbd75795ca359b0c976",
+    "data/source/download_D50.json": "278eb225c3a3e7cd48392ddc103d57369c5054ed65d8e6c0d010f32b4edf1712",
+    "data/source/download_manifest.json": "9e71660de24248cba57d421d328ac3dd44fabbc517189caa9f1be60da237b8ef",
+    "data/source/status_a_source.py": "60f4171d6d7dfbcc779b2ead494366323c3070b27a63061829a24dcf7f2b0dc3",
+    "data/status_a.csv": "28b2e7563a89587d40a54a799e47672eae8331522c7cf8e74e83e114f78102dc",
+    "k64_dng.py": "3f38dcebf3897146d2db93dd65ca2f13fa64fb2b6e7986399ab3d0fd5131c6e5",
+    "k64_observation.py": "2d6dcb46ae955550ff0c60ae6c59f9d0bff4af83fb8101bd5200eb3da8e82fa7",
+    "k64_reconstruction.py": "01543787ebd3872a30ae5b97c4b325164b0e16de4eaa797085e2b45013779568",
+    "k64_spectral.py": "e465b626721f06df9c1cff47d8c1993cb3b21ddac6c3202f46234bebccf36801"
+  },
+  "elapsed_seconds": 845.9009065419959,
+  "limitations": [
+    "Digitized Kodak E-88 plots, not original Kodak measurements.",
+    "Hypothetical RGB-to-reflectance reconstruction, not measured scene spectra.",
+    "Base EV is conventional, not calibrated film or camera exposure.",
+    "CIE-derived tables: CC BY-SA 4.0; see source attributions.",
+    "Not a Kodak product, not a native Fuji film simulation."
+  ]
+}

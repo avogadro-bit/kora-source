@@ -1,0 +1,113 @@
+SOURCES, ATTRIBUTIONS ET DONNÉES RECONSTRUITES
+
+KODAK
+Eastman Kodak Company, KODACHROME 64 and 200 Films, E-88, juin 2009, page 4.
+Copie du document fournie au début du projet :
+https://ifsa.co.cr/htm/pdf/kodak/e88-2009_06.pdf
+SHA-256 PDF : 484aa096910b000231c40ee57e75a0a20d7b525be6903aa3a4523ddcdca53ef0
+F002_0490AC : courbes caractéristiques Status A.
+F002_0491AC : sensibilités spectrales, exposition effective 1,4 s ; E.N.D. 1,00.
+F002_0492AC : densités spectrales normalisées pour densité visuelle 1 à 3200 K.
+data/characteristic.csv, data/dyes.csv et data/sensitivity.csv sont copiés
+sans changement depuis l'étape 1. Reconstruction vectorielle du dessin, pas mesures Kodak originales.
+Le rapport complet de l'extraction reste dans ../k64_etape1/rapport_k64.pdf.
+Les droits du document et des tracés restent à Kodak.
+
+CIE : DONNÉES OFFICIELLES TÉLÉCHARGÉES, EMPREINTES CONTRÔLÉES
+CIE 2019, Colour-matching functions of CIE 1931 standard colorimetric observer.
+DOI : https://doi.org/10.25039/CIE.DS.xvudnb9b
+https://cie.co.at/datatable/cie-1931-colour-matching-functions-2-degree-observer
+MD5 CIE_xyz_1931_2deg.csv : 17cca777db64b17170f06f67ce9d3ab7
+
+CIE 2019, CIE standard illuminant D65.
+DOI : https://doi.org/10.25039/CIE.DS.hjfjmt59
+https://www.cie.co.at/datatable/cie-standard-illuminant-d65
+MD5 CIE_std_illum_D65.csv : 03d4eb9b837c60671627c946fb534deb
+
+Les deux tables sont conservées intactes dans data/source/, avec leurs
+métadonnées officielles. Licence CC BY-SA 4.0 selon ces métadonnées :
+https://creativecommons.org/licenses/by-sa/4.0/
+Les adaptations de ces tables CIE, le cas échéant, relèvent de CC BY-SA 4.0.
+Les poids d'intégration du programme sont dérivés des tables ; les fonctions
+CIE ne sont pas des données Kodak. Aucun code de la bibliothèque Colour n'est
+utilisé, et aucune installation de cette bibliothèque n'est nécessaire.
+
+PONDÉRATIONS DE DENSITOMÉTRIE STATUS A
+python-colormath, Greg Taylor et contributeurs ; dépôt officiel archivé.
+https://github.com/gtaylor/python-colormath/blob/master/colormath/density_standards.py
+https://python-colormath.readthedocs.io/en/latest/density.html
+Grille SpectralColor documentée : 340 à 830 nm, pas 10 nm :
+https://github.com/gtaylor/python-colormath/blob/master/colormath/color_objects.py
+
+Les tableaux ANSI_STATUS_A_RED/GREEN/BLUE sont extraits littéralement du
+fichier source dans data/status_a.csv. La source téléchargée est conservée
+dans data/source/status_a_source.py ; elle n'est pas exécutée par le modèle.
+La licence BSD à trois clauses est fournie dans data/source/COLORMATH_LICENSE.txt.
+Le dépôt publie des pondérations ANSI ; il ne constitue pas le texte normatif
+ISO ni une caractérisation du densitomètre de Kodak. Cette limite est déclarée.
+Les pondérations sont interpolées à 1 nm pour le calcul et normalisées en somme.
+
+sRGB
+International Color Consortium, registre sRGB : primaires, blanc et encodage.
+https://registry.color.org/rgb-registry/srgb
+Primaires xy : R=(0,64;0,33), G=(0,30;0,60), B=(0,15;0,06).
+Blanc D65 xy=(0,3127;0,3290). Conversion dérivée de ces valeurs.
+
+RECONSTRUCTION SPECTRALE : RÉFÉRENCES CONCEPTUELLES
+Scott Allen Burns, Generating Reflectance Curves from sRGB Triplets (2017,
+révision 2020) : https://arxiv.org/abs/1710.05732
+Pharr, Jakob et Humphreys, Physically Based Rendering, quatrième édition,
+chapitre Color : https://www.pbr-book.org/4ed/Radiometry,_Spectra,_and_Color/Color
+
+Ces références expliquent notamment la non-unicité de l'inversion RGB vers
+spectre. Nos trois problèmes quadratiques sont définis dans METHODE_ETAPE4.txt ; ils
+ne constituent pas une reproduction certifiée d'un algorithme nommé de ces
+publications. Aucun code ni jeu de spectres de ces publications n'est copié.
+La mire et la paire métamère sont construites mathématiquement par nos scripts.
+
+ÉCLAIRAGE D50 — DONNÉES CIE OFFICIELLES
+CIE 2022, CIE standard illuminant D50, International Commission on Illumination.
+DOI : https://doi.org/10.25039/CIE.DS.etgmuqt5
+https://cie.co.at/datatable/cie-standard-illuminant-d50
+Données et métadonnées :
+https://files.cie.co.at/Publications-datasets/CIE_std_illum_D50.csv
+https://files.cie.co.at/Publications-datasets/CIE_std_illum_D50.csv_metadata.json
+MD5 officiel vérifié : e72757c3078b58e78ba63051be4b27b0
+SHA-256 officiel vérifié : b23049c6f7b266c1c1fbe147aa271e8930ca02d6e569c5ae1804c036faea4193
+La table originale 300–830 nm, pas 1 nm, est conservée sans modification.
+Le modèle utilise sa partie 360–830 nm avec l'observateur CIE 1931 à 2°.
+Licence CC BY-SA 4.0 selon les métadonnées, incluses avec la table.
+Les poids d'intégration dérivés sont une adaptation de ces données CIE.
+
+Kodak E-88, page 1, prévoit l'observation sous éclairage à 5000 K.
+D50 est un choix normalisé proche de ce repère, pas une lampe Kodak mesurée.
+La température de couleur ne définit pas à elle seule un spectre de lampe.
+
+ADAPTATION CHROMATIQUE ET sRGB
+International Color Consortium, FAQ, conversion D50/D65 :
+https://www.color.org/faqs/
+International Color Consortium, sRGB profiles :
+https://registry.color.org/rgb-registry/srgbprofiles
+Registre sRGB : https://registry.color.org/rgb-registry/srgb
+Le modèle utilise la transformation Bradford linéaire complète, calculée à
+partir des blancs intégrés des lampes vers le blanc D65 du sRGB. La matrice
+Bradford était déjà présente dans le moteur de l'étape 3. Elle n'est pas une
+courbe Kodak ni une mesure d'adaptation visuelle de l'utilisateur.
+
+PROVENANCE LOCALE — ÉTAPE 7
+Les six modules k64_dng.py, k64_spectral.py, k64_reconstruction.py,
+k64_photo.py, comparaison_photo.py et validation_serie.py sont repris sans
+modification de l'étape 6, avec requirements.txt, selection.json et data/.
+L'annexe METHODE_ETAPE4.txt est reprise avec le nom du script courant adapté.
+PROVENANCE.json contrôle les identités des copies. Les nouveaux fichiers
+k64_observation.py et comparaison_observation.py séparent observation et scène.
+Les scripts essai_observation_spyder.py et voir_observation_spyder.py sont les
+points d'entrée utilisateur. Aucun tracé Kodak supplémentaire n'est fabriqué.
+
+Les huit photos personnelles sont lues dans le dossier fourni par l'utilisateur :
+[chemin personnel omis dans la distribution Kora].
+Les empreintes DNG sont vérifiées avant/après. Aucun DNG n'est dans l'archive.
+Les JPEG/PNG et diagnostics sont des traitements de ces photos, sans mesure
+comparative d'une diapositive réelle.
+
+Les résultats ne sont ni certifiés ni approuvés par Kodak, la CIE ou l'ICC.

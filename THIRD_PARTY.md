@@ -34,3 +34,16 @@ L’implémentation géométrique se réfère à la [spécification DNG Adobe](h
 et l’intégration des profils à la [documentation lensfunpy](https://letmaik.github.io/lensfunpy/).
 
 Le code original est distribué sous [licence MIT](LICENSE). Cette licence ne remplace pas celles des ressources tierces. Ce document fournit l’inventaire des ressources ; il ne constitue pas une validation juridique des droits de distribution.
+
+## Experimental Kodachrome 64 model
+
+The generated scientific tables in `kora/film_data` are adaptations of CIE
+1931 observer and D65/D50 data (CC BY-SA 4.0). The attribution, dataset DOIs,
+license link and scope of the adaptations are in `kora/film_data/NOTICE.txt`.
+Their CC BY-SA terms are separate from the MIT license on Kora's code.
+Digitized Kodak E-88 plots remain attributed to Eastman Kodak Company; they
+are reconstructed drawings, not an original numerical Kodak dataset.
+Status A weights from python-colormath are BSD-3-Clause; the license is included.
+Reconstruction code, source tables and metadata are provided in the source
+archive under `scripts/kodachrome_reference`. No photograph or Fuji LUT enters
+these generated tables. See `docs/KODACHROME64.md` for method and limitations.

@@ -14,6 +14,13 @@ official Fujifilm download and lets the user choose the downloaded GFX ETERNA 55
 ZIP. The ten LUTs are hash-verified and installed locally; they are not bundled or
 redistributed by this project. See [macOS release and Gatekeeper notes](docs/MACOS_RELEASE.md).
 
+## Experimental Kodachrome 64
+
+Version 0.2.42 adds **Kodachrome 64 · Experimental** beside the Fuji films.
+Select it in FILM SIMULATION and adjust Push / Pull. This built-in model comes
+from the E-88 study; it is not a calibrated reproduction of film.
+[Method, use and limits](docs/KODACHROME64.md).
+
 ## Features
 
 - Intuitive input-folder browser with familiar locations, breadcrumbs, optional subfolders, and multi-camera RAW support through LibRaw (RAF, DNG, CR3, NEF, ARW, RW2, and others).
