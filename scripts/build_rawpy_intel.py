@@ -57,7 +57,10 @@ def main():
         f'set(CMAKE_OSX_SYSROOT "{sdk}" CACHE PATH "")\n'
         f'set(CMAKE_PREFIX_PATH "{prefix}" CACHE STRING "")\n'
         'set(CMAKE_IGNORE_PREFIX_PATH "/opt/homebrew;/usr/local" CACHE STRING "")\n', encoding='utf-8')
+    # Framework Python can report universal2 even when ARCHFLAGS builds Intel only.
+    # Keep the wheel tag consistent with the native library target.
     environment = {**os.environ, 'SDKROOT': str(sdk), 'MACOSX_DEPLOYMENT_TARGET': '14.0',
+                   '_PYTHON_HOST_PLATFORM': 'macosx-14.0-x86_64',
                    'ARCHFLAGS': '-arch x86_64', 'CFLAGS': '-arch x86_64 -mmacosx-version-min=14.0',
                    'CXXFLAGS': '-arch x86_64 -mmacosx-version-min=14.0',
                    'CMAKE_TOOLCHAIN_FILE': str(toolchain), 'CMAKE_PREFIX_PATH': str(prefix),
@@ -113,11 +116,15 @@ def main():
     run(sys.executable, '-m', 'pip', 'wheel', '--no-deps', '--no-build-isolation',
         '--wheel-dir', wheels, sources['rawpy-0.27.1'])
     wheel = next(wheels.glob('rawpy-0.27.1-*.whl'))
+    if not wheel.name.endswith('-macosx_14_0_x86_64.whl'):
+        raise RuntimeError(f'Expected a macOS 14 x86_64 RAW wheel, got {wheel.name}')
     # delocate needs the just-built @rpath dependencies only while repairing.
     # The final import test must not resolve libraries from this build directory.
     run(Path(sys.executable).parent / 'delocate-wheel', '--require-archs=x86_64',
         '-w', repaired, wheel, env={**environment, 'DYLD_LIBRARY_PATH': str(prefix / 'lib')})
     final = next(repaired.glob('rawpy-0.27.1-*.whl'))
+    if not final.name.endswith('-macosx_14_0_x86_64.whl'):
+        raise RuntimeError(f'Expected a repaired macOS 14 x86_64 RAW wheel, got {final.name}')
     run(sys.executable, '-m', 'pip', 'install', '--no-deps', '--force-reinstall', final)
     run(sys.executable, '-c',
         'import rawpy\n'
