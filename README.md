@@ -21,6 +21,20 @@ Select it in FILM SIMULATION and adjust Push / Pull. This built-in model comes
 from the E-88 study; it is not a calibrated reproduction of film.
 [Method, use and limits](docs/KODACHROME64.md).
 
+## Performance and portability in 0.2.43
+
+Preview adjustments reuse the reduced RAW buffer; batch exports retain only the
+active workers' JPEGs in memory. Metadata requests share a small invalidated cache,
+and Windows metadata reads support Unicode file paths without opening a console.
+On one 60 MP DNG, repeated 1800-pixel Kodachrome previews took a median 124 ms
+instead of 276 ms, with identical decoded JPEG pixels. Initial RAW decoding is
+unchanged. Reproduce this comparison with `scripts/benchmark_preview.py`.
+
+Separate macOS arm64/x86_64 builds and Windows x64 builds now audit native
+dependencies and packaged assets before creating installers. See
+[platform targets and validation limits](docs/PORTABILITY.md); configured CI jobs
+do not establish that every supported OS has been tested.
+
 ## Features
 
 - Intuitive input-folder browser with familiar locations, breadcrumbs, optional subfolders, and multi-camera RAW support through LibRaw (RAF, DNG, CR3, NEF, ARW, RW2, and others).

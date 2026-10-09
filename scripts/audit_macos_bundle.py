@@ -73,7 +73,9 @@ def audit_bundle(app, architecture):
     if not binaries:
         raise ValueError('No Mach-O binaries found')
     failures = [entry for entry in binaries if entry['problems']]
-    return {'minimum_macos': minimum, 'architecture': architecture,
+    actual_minimum = max((target for entry in binaries for target in entry['targets']), key=version)
+    return {'minimum_macos': minimum, 'required_by_binaries': actual_minimum,
+            'architecture': architecture,
             'binary_count': len(binaries), 'compatible': not failures, 'binaries': binaries}
 
 

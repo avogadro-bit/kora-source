@@ -1,5 +1,8 @@
 """RAW input diagnostics and neutral test assets, not Fuji rendering."""
 from collections import Counter
+from copy import deepcopy
+from functools import lru_cache
+import threading
 from pathlib import Path
 import hashlib
 import json
@@ -10,7 +13,7 @@ import time
 import numpy as np
 from PIL import Image, ImageCms
 import rawpy
-from .external_tools import find_exiftool
+from .external_tools import find_exiftool, read_exiftool
 
 
 def local_file(path: Path) -> bool:
@@ -54,17 +57,31 @@ def normalize_exif(data):
     return result
 
 
+@lru_cache(maxsize=128)
+def _exif_lock(path):
+    return threading.Lock()
+
+
 def exif(path: Path) -> dict:
+    path=Path(path).resolve()
     require_local(path)
-    executable = find_exiftool()
+    st=path.stat()
+    executable=find_exiftool()
+    # Only metadata is retained, never photo pixels. The executable identity
+    # also invalidates a prior no-ExifTool fallback when the tool is installed.
+    with _exif_lock(path):
+        return deepcopy(_cached_exif(path,st.st_mtime_ns,st.st_size,st.st_ctime_ns,executable))
+
+
+@lru_cache(maxsize=128)
+def _cached_exif(path,mtime,size,ctime,executable):
     if not executable:
         if path.suffix.lower() == '.dng':
             return dng_input_metadata(path)
         return {"metadata_available": False, "reason": "ExifTool missing"}
     tags = ["BaselineExposure", "Make", "Model", "NEFCompression", "RawImageFullSize", "ImageWidth", "ImageHeight", "ISO", "ExposureTime", "FNumber", "FilmMode", "WhiteBalance", "WhiteBalanceFineTune", "WB_GRBLevelsAuto", "WB_GRGBLevelsAuto", "DynamicRange", "DevelopmentDynamicRange", "HighlightTone", "ShadowTone", "Saturation", "Sharpness", "NoiseReduction", "GrainEffectRoughness", "GrainEffectSize", "ColorChromeEffect", "ColorChromeFXBlue", "Clarity", "DNGVersion", "PhotometricInterpretation", "Software", "ColorMatrix1", "ColorMatrix2", "ForwardMatrix1", "ForwardMatrix2", "AsShotNeutral", "CFARepeatPatternDim", "CFAPattern2", "BlackLevel", "WhiteLevel", "CalibrationIlluminant1", "CalibrationIlluminant2"]
-    result = subprocess.run([executable, "-j", "-G1", "-a", *["-" + t for t in tags], str(path)], capture_output=True, text=True, check=True, timeout=20,
-                            creationflags=0x08000000 if sys.platform == 'win32' else 0)
-    data = json.loads(result.stdout)[0]
+    text = read_exiftool(executable,path,["-j", "-G1", "-a", *["-"+t for t in tags]])
+    data = json.loads(text)[0]
     return normalize_exif(data)
 
 

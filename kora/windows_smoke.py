@@ -37,7 +37,7 @@ def check_raw(server, roots):
     info = json.loads(request('/api/photo/' + identifier))
     source = [info['developed_size']['width'], info['developed_size']['height']]
     results = {}
-    for film in ('provia', 'classic_negative', 'pro_neg_hi'):
+    for film in ('provia', 'classic_negative', 'pro_neg_hi', 'kodachrome64'):
         recipe = {'film': film}
         body = {'id': identifier, 'recipe': recipe, 'quality': 'display', 'edge': 1024}
         preview = image_size(request('/api/render', body))

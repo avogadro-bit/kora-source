@@ -7,7 +7,8 @@ permissions:
   contents: read
 jobs:
   windows:
-    runs-on: windows-latest
+    # A fixed runner avoids an implicit OS change when GitHub moves "latest".
+    runs-on: windows-2022
     timeout-minutes: 30
     env:
       KORA_LUT_DIR: .ci-absent-fuji-luts
@@ -20,7 +21,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: python -m pip install ".[release,optics,emulation]" rawpy==0.27.1 lensfunpy==1.18.0
+      - run: python -m pip install -c packaging/requirements-windows.txt ".[release,optics,emulation]"
       - name: Windows regression tests
         timeout-minutes: 4
         run: python -c "import faulthandler, unittest; faulthandler.dump_traceback_later(120, exit=True); result=unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.discover('tests')); raise SystemExit(not result.wasSuccessful())"
@@ -28,6 +29,8 @@ jobs:
       - run: node --test tests/test_film_choices_js.cjs tests/test_diagnostics_js.cjs
       - run: python scripts/prepare_release_notices.py
       - run: python -m scripts.build_windows_release
+      - name: Save resolved dependency versions
+        run: python -m pip list --format=freeze > dist/windows-release/requirements-resolved.txt
       - run: python scripts/smoke_windows_release.py
       - uses: actions/upload-artifact@v4
         with:

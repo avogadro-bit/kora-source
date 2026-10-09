@@ -1,0 +1,13 @@
+# Pin native/rendering dependencies and the desktop packager. The build also
+# records the fully resolved environment next to its compatibility report.
+rawpy==0.27.1
+lensfunpy==1.18.0
+numpy==2.5.3
+scipy==1.18.1
+pillow==12.3.0
+pydantic==2.13.5
+pydantic_core==2.46.5
+tifffile==2026.9.15
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.7
+pywebview==6.2.1

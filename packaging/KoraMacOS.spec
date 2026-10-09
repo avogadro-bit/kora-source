@@ -1,5 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 from pathlib import Path
+import os
 
 from PyInstaller.utils.hooks import collect_data_files
 from kora import __version__
@@ -7,6 +8,10 @@ from kora.compatibility import MAC_BUNDLE_ID
 
 
 project_root = Path(SPEC).resolve().parent.parent
+variant = os.environ.get('KORA_BUILD_VARIANT', '')
+if variant not in ('', 'arm64', 'x86_64'):
+    raise RuntimeError('Invalid KORA_BUILD_VARIANT')
+build_root = project_root / 'build' / variant if variant else project_root / 'build'
 datas = collect_data_files(
     "kora",
     includes=["film_data/*", "static/*", "luts/*.json", "lensfun_db/*"],
@@ -15,7 +20,7 @@ datas += [
     (str(project_root / "LICENSE"), "."),
     (str(project_root / "THIRD_PARTY.md"), "."),
 ]
-notices = project_root / "build" / "release-notices"
+notices = build_root / "release-notices"
 if not (notices / "inventory.json").is_file():
     raise RuntimeError("Run scripts/prepare_release_notices.py before packaging")
 datas.append((str(notices), "Third-Party-Notices"))
@@ -63,7 +68,7 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name="KŌRA.app",
-    icon=str(project_root / "build" / "AppIcon.icns"),
+    icon=str(build_root / "AppIcon.icns"),
     bundle_identifier=MAC_BUNDLE_ID,
     version=__version__,
     info_plist={

@@ -5,7 +5,9 @@ import Foundation
 let root = URL(fileURLWithPath: CommandLine.arguments[1])
 let master = root.appendingPathComponent("packaging/AppIcon.svg")
 guard let source = NSImage(contentsOf: master) else { fatalError("Cannot load vector icon") }
-let output = root.appendingPathComponent("build/AppIcon.iconset")
+let output = CommandLine.arguments.count > 2
+    ? URL(fileURLWithPath: CommandLine.arguments[2])
+    : root.appendingPathComponent("build/AppIcon.iconset")
 try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
 for size in [16, 32, 128, 256, 512] {
     for scale in [1, 2] {

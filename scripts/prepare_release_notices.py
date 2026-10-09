@@ -13,10 +13,15 @@ import shutil
 import subprocess
 import sys
 import tarfile
+if __package__:
+    from .release_paths import release_paths
+else:
+    from release_paths import release_paths
 
 ROOT = Path(__file__).resolve().parents[1]
-DEST = ROOT / 'build' / 'release-notices'
-SOURCES = ROOT / 'build' / 'dependency-sources'
+BUILD, _, _ = release_paths(ROOT)
+DEST = BUILD / 'release-notices'
+SOURCES = BUILD / 'dependency-sources'
 PACKAGES = ('rawpy', 'lensfunpy', 'numpy', 'scipy', 'pillow', 'pydantic',
             'pydantic_core', 'tifffile', 'typing_extensions', 'typing-inspection',
             'annotated-types', 'packaging', 'pyobjc-core', 'pyobjc-framework-Cocoa',
@@ -85,7 +90,7 @@ def runtime_notices():
         name = f'cpython-{python_version}-{build}-full.tar.zst'
         url = (f'https://github.com/astral-sh/python-build-standalone/releases/download/{build}/'
                f'cpython-{python_version}%2B{build}-{triple}-pgo%2Blto-full.tar.zst')
-        archive_path = ROOT / 'build' / 'runtime-archives' / name
+        archive_path = BUILD / 'runtime-archives' / name
         archive_path.parent.mkdir(parents=True, exist_ok=True)
         if not archive_path.is_file():
             subprocess.run(['curl', '-fL', '--retry', '2', '--silent', '--show-error',
@@ -176,6 +181,14 @@ def main():
         shutil.copytree(lens_database, destination/'lensfun-database', dirs_exist_ok=True)
     manifest = {'python': sys.version.split()[0], 'runtime': runtime, 'packages': packages, 'native_sources': sources,
                 'lens_database': json.loads((lens_database/'origin.json').read_text())}
+    intel_build = ROOT / 'build' / 'intel-runtime' / 'native'
+    if sys.platform == 'darwin' and platform.machine() == 'x86_64' and (intel_build/'build-manifest.json').is_file():
+        manifest['intel_raw_build'] = json.loads((intel_build/'build-manifest.json').read_text(encoding='utf-8'))
+        # The source-build helper uses the PyPI sdist (including submodule
+        # sources), whereas the general source cache has the upstream Git tag.
+        shutil.copyfile(intel_build/'rawpy-0.27.1.tar.gz', SOURCES/'rawpy-0.27.1-pypi.tar.gz')
+        shutil.copyfile(intel_build/'build-manifest.json', SOURCES/'intel-raw-build.json')
+        shutil.copyfile(intel_build/'build-manifest.json', DEST/'intel-raw-build.json')
     (DEST/'inventory.json').write_text(json.dumps(manifest, indent=2)+'\n')
     (SOURCES/'inventory.json').write_text(json.dumps(manifest, indent=2)+'\n')
     shutil.copyfile(ROOT/'docs'/'DEPENDENCY_NOTICES.md', DEST/'README.md')

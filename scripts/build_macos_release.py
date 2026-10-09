@@ -1,5 +1,6 @@
 """Build the self-contained macOS application, ZIP, DMG, and checksums."""
 import hashlib
+import os
 import platform
 from pathlib import Path
 import shutil
@@ -7,6 +8,10 @@ import subprocess
 import sys
 
 from kora import __version__
+if __package__:
+    from .release_paths import release_paths
+else:
+    from release_paths import release_paths
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -41,7 +46,13 @@ def main():
 
     # A deployment-target environment variable cannot make an existing runtime
     # compatible with older systems. Reject it before removing previous builds.
-    from audit_macos_bundle import inspect_binary
+    variant = os.environ.get('KORA_BUILD_VARIANT', '')
+    if variant and variant != architecture:
+        raise SystemExit('KORA_BUILD_VARIANT must match the Python interpreter architecture.')
+    if __package__:
+        from .audit_macos_bundle import inspect_binary
+    else:
+        from audit_macos_bundle import inspect_binary
     from PyInstaller.depend.bindepend import get_python_library_path
     runtime = get_python_library_path()
     if runtime is None:
@@ -52,15 +63,14 @@ def main():
     if any('requires macOS' in issue or 'missing ' in issue for issue in runtime_check['problems']):
         raise SystemExit(f"Incompatible Python runtime: {runtime_check['problems']}")
 
-    work = ROOT / "build" / "pyinstaller"
-    app_dist = ROOT / "dist" / "macos"
-    release = ROOT / "dist" / "release"
-    staging = ROOT / "build" / "dmg-root"
+    build, app_dist, release = release_paths(ROOT)
+    work = build / 'pyinstaller'
+    staging = build / 'dmg-root'
     for path in (work, app_dist, release, staging):
         reset_directory(path)
 
-    run("swift", ROOT / "scripts" / "build_app_icon.swift", ROOT)
-    run("iconutil", "-c", "icns", ROOT / "build" / "AppIcon.iconset", "-o", ROOT / "build" / "AppIcon.icns")
+    run("swift", ROOT / "scripts" / "build_app_icon.swift", ROOT, build / 'AppIcon.iconset')
+    run("iconutil", "-c", "icns", build / "AppIcon.iconset", "-o", build / "AppIcon.icns")
     run(
         sys.executable,
         "-m",
@@ -78,7 +88,8 @@ def main():
     if not app.is_dir():
         raise SystemExit(f"Application bundle was not produced: {app}")
     run(sys.executable, ROOT / 'scripts' / 'audit_macos_bundle.py', app,
-        '--architecture', architecture, '--report', ROOT / 'build' / 'macos-compatibility.json')
+        '--architecture', architecture, '--report', build / 'macos-compatibility.json')
+    run(sys.executable, ROOT / 'scripts' / 'audit_package_assets.py', app / 'Contents' / 'Resources')
     # Ad-hoc signing catches altered nested binaries and avoids an entirely
     # unsigned bundle. Public notarization still requires an Apple Developer ID.
     run("codesign", "--force", "--deep", "--sign", "-", app)
@@ -91,7 +102,7 @@ def main():
 
     run("ditto", app, staging / app.name)
     (staging / "Applications").symlink_to("/Applications")
-    shutil.copyfile(ROOT / "build" / "AppIcon.icns", staging / ".VolumeIcon.icns")
+    shutil.copyfile(build / "AppIcon.icns", staging / ".VolumeIcon.icns")
     run("SetFile", "-a", "C", staging)
     run(
         "hdiutil",
@@ -107,8 +118,9 @@ def main():
     )
 
     checksums = release / "SHA256SUMS.txt"
-    sources = Path(shutil.make_archive(str(release / "Dependency-Sources"), "zip", ROOT / "build" / "dependency-sources"))
-    notices = Path(shutil.make_archive(str(release / "Third-Party-Notices"), "zip", ROOT / "build" / "release-notices"))
+    sources = Path(shutil.make_archive(str(release / "Dependency-Sources"), "zip", build / "dependency-sources"))
+    notices = Path(shutil.make_archive(str(release / "Third-Party-Notices"), "zip", build / "release-notices"))
+    shutil.copyfile(build / 'macos-compatibility.json', release / 'macos-compatibility.json')
     checksums.write_text(
         "".join(f"{digest(path)}  {path.name}\n" for path in (archive, image, sources, notices)),
         encoding="utf-8",

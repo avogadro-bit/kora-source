@@ -12,6 +12,13 @@ from .platform_support import windows_data_directory as data_directory
 STARTUP_TIMEOUT = 30
 
 
+def expected_films(status):
+    """The packaged UI must expose built-in special films as well as Fuji films."""
+    return sorted(set(status['official_lut_films']) |
+                  set(status['xm5_reference_validation']['films']) |
+                  set(status.get('special_films', {})))
+
+
 class WindowControls:
     def __init__(self):
         self.window = None
@@ -72,18 +79,17 @@ def run(roots, port, smoke_report=None):
             try:
                 from .studio import studio_status
                 status = studio_status()
-                expected_films = sorted(set(status['official_lut_films']) |
-                                        set(status['xm5_reference_validation']['films']))
+                films = expected_films(status)
                 window = controls.window
                 if not window.events.loaded.wait(30):
                     raise RuntimeError('WebView2 page did not load')
                 result = {}
                 for _ in range(100):
                     result = window.evaluate_js("({title:document.title, films:Array.from(document.querySelector('#film').options, o=>o.value).sort(), grid:!!document.querySelector('#wb-grid')})")
-                    if result and result.get('films') == expected_films:
+                    if result and result.get('films') == films:
                         break
                     time.sleep(.1)
-                if result.get('title') != 'KŌRA' or result.get('films') != expected_films or not result.get('grid'):
+                if result.get('title') != 'KŌRA' or result.get('films') != films or not result.get('grid'):
                     raise RuntimeError(f'Unexpected Windows UI state: {result}')
                 from .windows_smoke import check_raw
                 raw_result = check_raw(state['server'], roots)

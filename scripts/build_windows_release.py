@@ -1,5 +1,6 @@
 """Build a portable Windows x64 KŌRA distribution on Windows."""
-import platform
+import struct
+import sysconfig
 from pathlib import Path
 import shutil
 import subprocess
@@ -7,9 +8,19 @@ import sys
 
 from PIL import Image, ImageDraw
 from kora import __version__
-from scripts.build_macos_release import digest, reset_directory
+if __package__:
+    from .build_macos_release import digest, reset_directory
+else:
+    from build_macos_release import digest, reset_directory
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def windows_x64_python():
+    # Windows on Arm can report platform.machine() == 'ARM64' even when the
+    # process is an emulated x64 Python. Build for the interpreter, not the host.
+    return (sys.platform == 'win32' and sysconfig.get_platform() == 'win-amd64'
+            and struct.calcsize('P') == 8)
 
 
 def build_icon():
@@ -24,7 +35,7 @@ def build_icon():
 
 
 def main():
-    if sys.platform != 'win32' or platform.machine().lower() not in ('amd64', 'x86_64'):
+    if not windows_x64_python():
         raise SystemExit('Build this release on Windows x64 using 64-bit Python.')
     work, output, release = (ROOT / 'build' / 'windows-pyinstaller', ROOT / 'dist' / 'windows', ROOT / 'dist' / 'windows-release')
     for path in (work, output, release):
@@ -36,6 +47,8 @@ def main():
     app = output / 'Kora'
     if not (app / 'Kora.exe').is_file():
         raise RuntimeError('Kora.exe was not produced')
+    subprocess.run([sys.executable, str(ROOT / 'scripts/audit_windows_bundle.py'), str(app),
+                    '--report', str(release / 'windows-compatibility.json')], cwd=ROOT, check=True)
     shutil.copyfile(ROOT / 'docs' / 'WINDOWS_RELEASE.md', app / 'READ-ME.md')
     archive = Path(shutil.make_archive(str(release / f'Kora-{__version__}-Windows-x64'), 'zip', output, 'Kora'))
     sources = Path(shutil.make_archive(str(release / 'Dependency-Sources-Windows'), 'zip', ROOT / 'build' / 'dependency-sources'))

@@ -1,0 +1,7 @@
+# Extra build tools for the Intel rawpy wheel (not application dependencies).
+cmake==4.4.4
+Cython==3.3.0
+delocate==0.13.0
+wheel==0.48.0
+numpy==2.5.3
+setuptools==84.0.0

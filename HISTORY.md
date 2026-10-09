@@ -2,6 +2,20 @@
 
 Ces notes décrivent les étapes antérieures ; suivre README.md pour installer la version actuelle.
 
+## 0.2.43 — Aperçus, mémoire et portabilité
+
+Réutilisation du RAW réduit entre les réglages : sur le DNG de 60 mégapixels
+testé, calcul médian de l'aperçu à 1 800 pixels de 276 à 124 ms, sans différence
+des pixels JPEG décodés. Le décodage RAW initial reste inchangé. Les exports par
+lot ne retiennent plus tous les JPEG terminés en mémoire. Les métadonnées sont
+mises en cache et les chemins Windows sont transmis en UTF-8 à ExifTool.
+
+Construction séparée pour Mac Apple Silicon et Intel, avec RAW Intel compilé
+depuis les sources vérifiées et contrôle des dépendances embarquées. Audit du
+paquet Windows x64, y compris depuis Windows ARM, et tests du paquet déplacé
+dans un dossier contenant des caractères accentués.
+[Plateformes, vérifications et limites](docs/PORTABILITY.md).
+
 ## 0.2.42 — Kodachrome 64 expérimental
 
 Ajout du modèle spectral E-88 comme film spécial intégré : méthode pente,

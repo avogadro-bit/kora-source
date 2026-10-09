@@ -1,0 +1,39 @@
+name: macOS applications build
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: macos-14, architecture: arm64}
+          - {os: macos-15-intel, architecture: x86_64}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      KORA_LUT_DIR: .ci-absent-fuji-luts
+      KORA_BUILD_VARIANT: ${{ matrix.architecture }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv python install 3.14.8
+      - run: uv venv --seed --python 3.14.8 .venv-release
+      - name: Build missing upstream Intel RAW wheel
+        if: matrix.architecture == 'x86_64'
+        run: |
+          uv pip install --python .venv-release/bin/python -r packaging/requirements-intel-build.txt
+          .venv-release/bin/python scripts/build_rawpy_intel.py
+      - run: uv pip install --python .venv-release/bin/python -c packaging/requirements-macos.txt -e '.[release,optics]' build
+      - run: .venv-release/bin/python -m unittest discover -s tests -p 'test_portability*.py' -v
+      - run: .venv-release/bin/python scripts/prepare_release_notices.py
+      - run: .venv-release/bin/python scripts/build_macos_release.py
+      - name: Save resolved dependency versions
+        run: .venv-release/bin/python -m pip list --format=freeze > dist/release-${{ matrix.architecture }}/requirements-resolved.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Kora-macOS-${{ matrix.architecture }}
+          path: dist/release-${{ matrix.architecture }}/*
+          if-no-files-found: error

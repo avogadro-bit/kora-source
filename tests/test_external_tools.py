@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
+import tempfile
 from unittest.mock import patch
 
 from kora.external_tools import find_exiftool
@@ -32,10 +33,11 @@ class ExternalToolTests(unittest.TestCase):
             which.assert_called_once_with('exiftool')
 
     def test_metadata_invokes_resolved_binary(self):
-        with patch.object(raw, 'require_local'), \
+        with tempfile.TemporaryDirectory() as tmp, patch.object(raw, 'require_local'), \
              patch.object(raw, 'find_exiftool', return_value='/custom/exiftool'), \
              patch.object(raw.subprocess, 'run', return_value=SimpleNamespace(stdout='[{"EXIF:Model":"Test"}]')) as run:
-            self.assertEqual(raw.exif(Path('/photos/test.raf'))['Model'], 'Test')
+            photo=Path(tmp)/'test.raf';photo.write_bytes(b'fixture')
+            self.assertEqual(raw.exif(photo)['Model'], 'Test')
             self.assertEqual(run.call_args.args[0][0], '/custom/exiftool')
 
     def test_optics_metadata_and_opcode_use_resolved_binary(self):
