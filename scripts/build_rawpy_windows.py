@@ -38,8 +38,9 @@ def visual_studio_environment():
     if not installation:
         raise SystemExit('No Visual Studio installation with the C++ x64 tools was found.')
     devcmd = Path(installation)/'Common7'/'Tools'/'vsdevcmd.bat'
+    # `set` can print characters outside the console code page; never fail on them.
     output = subprocess.run(f'"{devcmd}" -arch=x64 -no_logo && set', shell=True, check=True,
-                            capture_output=True, text=True).stdout
+                            capture_output=True, text=True, errors='replace').stdout
     environment = dict(os.environ)
     for line in output.splitlines():
         name, separator, value = line.partition('=')
@@ -96,10 +97,27 @@ def main():
     print(f'Built {wheel}')
 
 
+def annotate(message):
+    """GitHub error annotation; readable even when the job log is not."""
+    escaped = str(message)[-3000:].replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+    print(f'::error title=rawpy Windows build::{escaped}', flush=True)
+
+
 if __name__ == '__main__':
     try:
         main()
     except SystemExit as stop:
         if stop.code not in (None, 0) and os.environ.get('GITHUB_ACTIONS'):
-            print(f'::error title=rawpy build::{stop.code}', flush=True)
+            annotate(stop.code)
+        raise
+    except BaseException as error:
+        if os.environ.get('GITHUB_ACTIONS'):
+            import traceback
+            details = ''.join(traceback.format_exception(error)[-6:])
+            for stream in ('stdout', 'stderr'):
+                captured = getattr(error, stream, None)
+                if captured:
+                    details += f'\n{stream}: ' + (captured if isinstance(captured, str)
+                                                    else captured.decode('utf-8', 'replace'))[-1500:]
+            annotate(details)
         raise
