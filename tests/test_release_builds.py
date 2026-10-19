@@ -1,5 +1,6 @@
 from pathlib import Path
 import hashlib
+import os
 import tarfile
 import tempfile
 import types
@@ -10,7 +11,7 @@ import zipfile
 from scripts import build_rawpy_openmp as rawpy_build
 from scripts import build_windows_release as windows_build
 from scripts.audit_windows_bundle import audit_bundle
-from tests.test_portability import packaged_assets, write_pe
+from tests.test_portability import packaged_assets, windows_app, write_pe
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -120,6 +121,64 @@ class WindowsPackagingTests(unittest.TestCase):
             problems = '\n'.join(audit_bundle(app)['problems'])
             self.assertIn('vcomp140.dll', problems)
             self.assertIn('exiftool', problems.lower())
+
+    def test_audit_requires_x64_cpp_runtime_at_bundle_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app = Path(directory)
+            resources = windows_app(app)
+            self.assertTrue(audit_bundle(app)['compatible'])
+            # A Windows on Arm build leaves only numpy's renamed private copy.
+            (resources / 'MSVCP140.dll').unlink()
+            write_pe(resources / 'numpy.libs/msvcp140-a4c2229bdc2a2a630acdc095b4d86008.dll')
+            write_pe(resources / 'rawpy/msvcp140.dll')
+            problems = audit_bundle(app)['problems']
+            self.assertEqual(problems, ['Missing Visual C++ runtime: _internal/MSVCP140.dll'])
+            write_pe(resources / 'msvcp140.dll', 0xaa64)
+            problems = audit_bundle(app)['problems']
+            self.assertEqual(len(problems), 1)
+            self.assertIn('msvcp140.dll is arm64; expected x64', problems[0])
+
+    def test_vc_redist_is_newest_visual_studio_x64_runtime(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            vswhere = root / 'x86' / 'Microsoft Visual Studio' / 'Installer' / 'vswhere.exe'
+            vswhere.parent.mkdir(parents=True)
+            vswhere.write_bytes(b'')
+            installs = [root / 'VS 2022' / 'BuildTools', root / 'VS 2022' / 'Community']
+            for install, version in ((installs[0], '14.44.35112'), (installs[1], '14.9.30000'),
+                                     (installs[1], 'v143')):
+                write_pe(install / 'VC/Redist/MSVC' / version / 'x64/Microsoft.VC143.CRT/msvcp140.dll')
+            write_pe(installs[1] / 'VC/Redist/MSVC/14.50.1/onecore/x64/Microsoft.VC143.CRT/msvcp140.dll')
+            result = types.SimpleNamespace(stdout=''.join(f'{path}\r\n' for path in installs))
+            with patch.dict(os.environ, {'ProgramFiles(x86)': str(root / 'x86')}), \
+                    patch.object(windows_build.subprocess, 'run', return_value=result) as run:
+                self.assertEqual(windows_build.vc_redist_x64(),
+                                 installs[0] / 'VC/Redist/MSVC/14.44.35112/x64/Microsoft.VC143.CRT')
+            self.assertEqual(run.call_args.args[0][:5], [str(vswhere), '-all', '-products', '*', '-property'])
+            with patch.dict(os.environ, {'ProgramFiles(x86)': str(root / 'none')}):
+                self.assertIsNone(windows_build.vc_redist_x64())
+
+    def test_build_fills_missing_or_foreign_cpp_runtime_from_redist(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            resources = windows_app(root / 'app')
+            redist = root / 'Microsoft.VC143.CRT'
+            for name in ('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll'):
+                write_pe(redist / name)
+                (redist / name).write_bytes((redist / name).read_bytes() + b'redist')
+            with patch.object(windows_build, 'vc_redist_x64') as find:
+                self.assertEqual(windows_build.bundle_vc_runtime(root / 'app'), [])
+            find.assert_not_called()
+            (resources / 'MSVCP140.dll').unlink()
+            write_pe(resources / 'VCRUNTIME140_1.dll', 0xaa64)
+            with patch.object(windows_build, 'vc_redist_x64', return_value=None), \
+                    self.assertRaisesRegex(SystemExit, 'MSVCP140.dll, VCRUNTIME140_1.dll.*redistributable'):
+                windows_build.bundle_vc_runtime(root / 'app')
+            with patch.object(windows_build, 'vc_redist_x64', return_value=redist):
+                self.assertEqual(windows_build.bundle_vc_runtime(root / 'app'), ['MSVCP140.dll', 'VCRUNTIME140_1.dll'])
+            for name, copied in (('MSVCP140.dll', True), ('VCRUNTIME140.dll', False), ('VCRUNTIME140_1.dll', True)):
+                self.assertEqual((resources / name).read_bytes().endswith(b'redist'), copied, name)
+            self.assertTrue(audit_bundle(root / 'app')['compatible'])
 
     def test_installer_script_is_per_user_utf8_and_versioned(self):
         script = (ROOT / 'packaging' / 'KoraWindows.iss').read_bytes()

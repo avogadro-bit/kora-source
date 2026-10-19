@@ -36,6 +36,27 @@ def packaged_assets(resources):
         json.dumps({'sha256': hashlib.sha256(data).hexdigest()}), encoding='utf-8')
 
 
+def windows_app(app):
+    """Minimal Windows bundle that passes the audit."""
+    resources = app / '_internal'
+    packaged_assets(resources)
+    write_pe(app / 'Kora.exe')
+    write_pe(resources / 'python313.dll')
+    for module in ('rawpy', 'numpy', 'scipy', 'lensfunpy'):
+        write_pe(resources / module / ('_' + module + '.pyd'))
+    write_pe(resources / 'webview/lib/runtimes/win-x64/native/WebView2Loader.dll')
+    for name in ('Microsoft.Web.WebView2.Core.dll', 'Microsoft.Web.WebView2.WinForms.dll'):
+        write_pe(resources / 'webview/lib' / name, 0x14c)
+    write_pe(resources / 'pythonnet/runtime/Python.Runtime.dll', 0x14c)
+    write_pe(resources / 'rawpy/vcomp140.dll')
+    for name in ('MSVCP140.dll', 'VCRUNTIME140.dll', 'VCRUNTIME140_1.dll'):
+        write_pe(resources / name)
+    write_pe(app / 'tools/exiftool.exe')
+    (app / 'tools/exiftool_files').mkdir()
+    (app / 'tools/exiftool_files/LICENSE').write_text('license', encoding='utf-8')
+    return resources
+
+
 class PortabilityTests(unittest.TestCase):
     def test_windows_smoke_stops_only_its_live_process_tree(self):
         from scripts import smoke_windows_release as smoke
@@ -116,21 +137,8 @@ class PortabilityTests(unittest.TestCase):
     def test_windows_bundle_rejects_wrong_native_architecture_but_accepts_managed_dlls(self):
         with tempfile.TemporaryDirectory() as directory:
             app = Path(directory)
-            resources = app / '_internal'
-            packaged_assets(resources)
-            write_pe(app / 'Kora.exe')
-            write_pe(resources / 'python313.dll')
-            for module in ('rawpy', 'numpy', 'scipy', 'lensfunpy'):
-                write_pe(resources / module / ('_' + module + '.pyd'))
+            resources = windows_app(app)
             loader = resources / 'webview/lib/runtimes/win-x64/native/WebView2Loader.dll'
-            write_pe(loader)
-            for name in ('Microsoft.Web.WebView2.Core.dll', 'Microsoft.Web.WebView2.WinForms.dll'):
-                write_pe(resources / 'webview/lib' / name, 0x14c)
-            write_pe(resources / 'pythonnet/runtime/Python.Runtime.dll', 0x14c)
-            write_pe(resources / 'rawpy/vcomp140.dll')
-            write_pe(app / 'tools/exiftool.exe')
-            (app / 'tools/exiftool_files').mkdir()
-            (app / 'tools/exiftool_files/LICENSE').write_text('license', encoding='utf-8')
             self.assertTrue(audit_bundle(app)['compatible'])
             write_pe(loader, 0xaa64)
             report = audit_bundle(app)

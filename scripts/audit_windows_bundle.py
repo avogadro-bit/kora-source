@@ -14,6 +14,9 @@ else:
     from audit_package_assets import audit_assets
 
 MACHINES = {0x14c: 'x86', 0x8664: 'x64', 0xaa64: 'arm64'}
+# Visual C++ runtime imported by rawpy, lensfunpy and the Python runtime. A PC
+# without the VC++ redistributable only finds them at the root of _internal.
+VC_RUNTIME = ('MSVCP140.dll', 'VCRUNTIME140.dll', 'VCRUNTIME140_1.dll')
 
 
 def pe_machine(path):
@@ -66,6 +69,13 @@ def audit_bundle(app):
         required.append(openmp[0])
     else:
         problems.append('Missing OpenMP runtime: vcomp140.dll')
+    # Copies elsewhere (numpy.libs keeps a renamed private one) do not count.
+    root_files = {path.name.lower(): path for path in resources.iterdir()} if resources.is_dir() else {}
+    for name in VC_RUNTIME:
+        if name.lower() in root_files:
+            required.append(root_files[name.lower()])
+        else:
+            problems.append(f'Missing Visual C++ runtime: _internal/{name}')
     binaries = []
     for path in required:
         try:

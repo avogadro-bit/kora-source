@@ -14,9 +14,11 @@ import zipfile
 from PIL import Image, ImageDraw
 from kora import __version__
 if __package__:
+    from .audit_windows_bundle import VC_RUNTIME, pe_machine
     from .build_macos_release import digest, reset_directory
     from .build_rawpy_openmp import require_release_rawpy
 else:
+    from audit_windows_bundle import VC_RUNTIME, pe_machine
     from build_macos_release import digest, reset_directory
     from build_rawpy_openmp import require_release_rawpy
 
@@ -89,6 +91,55 @@ def bundle_exiftool(app, archive):
     return tools
 
 
+def vc_redist_x64():
+    """Newest x64 Visual C++ runtime folder of an installed Visual Studio, if any."""
+    vswhere = Path(os.environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)'),
+                   'Microsoft Visual Studio', 'Installer', 'vswhere.exe')
+    if not vswhere.is_file():
+        return None
+    # -products * also lists Build Tools, which carry the same redistributable.
+    result = subprocess.run([str(vswhere), '-all', '-products', '*', '-property', 'installationPath', '-utf8'],
+                            capture_output=True, encoding='utf-8', check=False)
+    folders = []
+    for install in filter(None, map(str.strip, result.stdout.splitlines())):
+        for crt in Path(install, 'VC', 'Redist', 'MSVC').glob('*/x64/Microsoft.VC*.CRT'):
+            version = crt.parent.parent.name.split('.')
+            if all(part.isdigit() for part in version) and (crt / 'msvcp140.dll').is_file():
+                folders.append((tuple(map(int, version)), crt))
+    return max(folders, key=lambda folder: folder[0])[1] if folders else None
+
+
+def is_x64(path):
+    try:
+        return pe_machine(path) == 'x64'
+    except (OSError, ValueError):
+        return False
+
+
+def bundle_vc_runtime(app):
+    """Add the x64 Visual C++ runtime that PyInstaller could not take from System32.
+
+    On Windows on Arm, System32 holds ARM64X builds that PyInstaller refuses for
+    an x64 bundle, so rawpy and lensfunpy would ship without MSVCP140.dll.
+    """
+    resources = app / '_internal'
+    present = {path.name.lower(): path for path in resources.iterdir()}
+    missing = [name for name in VC_RUNTIME if not is_x64(present.get(name.lower(), resources / name))]
+    if not missing:
+        return []
+    redist = vc_redist_x64()
+    if redist is None:
+        raise SystemExit(f'No x64 {", ".join(missing)} for the bundle, and no Visual Studio x64 redistributable '
+                         r'(VC\Redist\MSVC\*\x64\Microsoft.VC143.CRT) was found; install the C++ x64 build tools.')
+    for name in missing:
+        source = redist / name.lower()
+        if not is_x64(source):
+            raise SystemExit(f'{source} is not an x64 Visual C++ runtime DLL')
+        shutil.copyfile(source, present.get(name.lower(), resources / name))
+        print(f'Bundled {name} from {redist}', flush=True)
+    return missing
+
+
 def find_inno_setup():
     candidates = [shutil.which('iscc')]
     # Without administrator rights, Inno Setup installs in %LOCALAPPDATA%\Programs.
@@ -132,6 +183,7 @@ def main(argv=None):
     app = output / 'Kora'
     if not (app / 'Kora.exe').is_file():
         raise RuntimeError('Kora.exe was not produced')
+    bundle_vc_runtime(app)
     bundle_exiftool(app, exiftool_archive(args.exiftool_archive))
     subprocess.run([sys.executable, str(ROOT / 'scripts/audit_windows_bundle.py'), str(app),
                     '--report', str(release / 'windows-compatibility.json')], cwd=ROOT, check=True)
