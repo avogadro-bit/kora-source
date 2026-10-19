@@ -1,4 +1,5 @@
 import io
+import sys
 import tempfile
 import threading
 import unittest
@@ -109,6 +110,39 @@ class WindowsLifecycleTests(unittest.TestCase):
         _, download, operation = self.start_download(cancel=True)
         self.assertTrue(download.Handled)
         self.assertEqual(operation.StateChanged.handlers, [])
+
+    def test_frozen_windows_app_holds_installer_mutex(self):
+        with patch.object(desktop.sys, 'platform', 'win32'), patch.object(desktop.sys, 'frozen', True, create=True), \
+                patch.object(desktop, 'hold_windows_app_mutex') as hold, patch.object(desktop, 'serve'), \
+                patch.object(desktop.diagnostics, 'install_hooks'):
+            self.assertEqual(desktop.main(['--no-browser']), 0)
+        hold.assert_called_once_with()
+        with patch.object(desktop.sys, 'platform', 'win32'), patch.object(desktop, 'hold_windows_app_mutex') as hold, \
+                patch.object(desktop, 'serve'), patch.object(desktop.diagnostics, 'install_hooks'):
+            desktop.main(['--no-browser'])  # A source checkout must not block the installed app's uninstaller.
+        hold.assert_not_called()
+
+    def test_installer_waits_for_the_mutex_the_app_creates(self):
+        script = Path(__file__).resolve().parents[1] / 'packaging' / 'KoraWindows.iss'
+        text = script.read_text(encoding='utf-8-sig').replace('\r\n', '\n')
+        self.assertIn(f'\nAppMutex={desktop.WINDOWS_APP_MUTEX}\n', text)
+
+    @unittest.skipUnless(sys.platform == 'win32', 'Windows named mutex')
+    def test_installer_can_see_the_app_mutex(self):
+        import ctypes
+        kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel32.OpenMutexW.restype = kernel32.CreateMutexW.restype = ctypes.c_void_p
+        kernel32.OpenMutexW.argtypes = (ctypes.c_ulong, ctypes.c_bool, ctypes.c_wchar_p)
+        kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+        with patch.object(desktop, '_windows_app_mutex'):
+            handle = desktop.hold_windows_app_mutex()
+        self.assertTrue(handle)
+        # Inno Setup opens the mutex by name with SYNCHRONIZE access.
+        opened = kernel32.OpenMutexW(0x00100000, False, desktop.WINDOWS_APP_MUTEX)
+        self.assertTrue(opened)
+        kernel32.CloseHandle(opened)
+        kernel32.CloseHandle(handle)
+        self.assertFalse(kernel32.OpenMutexW(0x00100000, False, desktop.WINDOWS_APP_MUTEX))
 
     def test_window_failure_stops_server(self):
         self.run_window(RuntimeError('window failed'))

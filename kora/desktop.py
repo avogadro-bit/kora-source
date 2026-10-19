@@ -7,6 +7,23 @@ from kora import diagnostics
 
 from kora.compatibility import browser_disabled
 
+# packaging/KoraWindows.iss names this mutex in AppMutex: while a KŌRA process
+# holds it, the installer and uninstaller ask the user to close KŌRA first.
+WINDOWS_APP_MUTEX = 'Kora-6E1F7B52-3C4D-4E0B-9A71-4B6D2C1F0A55'
+_windows_app_mutex = None
+
+
+def hold_windows_app_mutex():
+    """Keep the mutex open until the process exits; Windows then closes it."""
+    global _windows_app_mutex
+    import ctypes
+    kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel32.CreateMutexW.restype = ctypes.c_void_p
+    kernel32.CreateMutexW.argtypes = (ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p)
+    # A failure only loses the uninstall guard; KŌRA must still start.
+    _windows_app_mutex = kernel32.CreateMutexW(None, False, WINDOWS_APP_MUTEX)
+    return _windows_app_mutex
+
 
 def serve(*args, **kwargs):
     # Native-library import failures must reach the startup handler as well.
@@ -45,6 +62,9 @@ def main(argv=None):
     parser.add_argument("--no-browser", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--smoke-report", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
+    if sys.platform == "win32" and getattr(sys, "frozen", False):
+        # Headless runs too: any Kora.exe process keeps the installed files open.
+        hold_windows_app_mutex()
     open_browser = False
     try:
         open_browser = not args.no_browser and not browser_disabled()

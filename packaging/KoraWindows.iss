@@ -32,6 +32,9 @@ SolidCompression=yes
 WizardStyle=modern
 CloseApplications=yes
 RestartApplications=no
+; Created by kora/desktop.py (WINDOWS_APP_MUTEX). Without it, uninstalling while
+; KŌRA runs removes the shortcut and uninstall entry but leaves Kora.exe behind.
+AppMutex=Kora-6E1F7B52-3C4D-4E0B-9A71-4B6D2C1F0A55
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -76,4 +79,32 @@ begin
     MsgBox('KŌRA needs the Microsoft Edge WebView2 Runtime, which was not found.' + #13#10 +
            'Install it from https://developer.microsoft.com/microsoft-edge/webview2/ before opening KŌRA.',
            mbInformation, MB_OK);
+end;
+
+function RemoveOwnedFolder(const Name: String): Boolean;
+begin
+  Result := True;
+  if DirExists(Name) then
+    Result := DelTree(Name, True, True, True);
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  Attempt: Integer;
+  Internal, Tools: Boolean;
+begin
+  // AppMutex lets the uninstaller start as soon as KŌRA exits, but Windows can
+  // keep the DLLs it loaded locked for a few seconds more (about 35 files on
+  // Windows on Arm), and the uninstaller would skip them. Delete the folders
+  // that [InstallDelete] already treats as ours, retrying while they are locked.
+  if CurUninstallStep <> usUninstall then
+    Exit;
+  for Attempt := 1 to 60 do
+  begin
+    Internal := RemoveOwnedFolder(ExpandConstant('{app}\_internal'));
+    Tools := RemoveOwnedFolder(ExpandConstant('{app}\tools'));
+    if Internal and Tools then
+      Exit;
+    Sleep(500);
+  end;
 end;
