@@ -91,9 +91,10 @@ def bundle_exiftool(app, archive):
 
 def find_inno_setup():
     candidates = [shutil.which('iscc')]
-    for variable in ('ProgramFiles(x86)', 'ProgramFiles'):
+    # Without administrator rights, Inno Setup installs in %LOCALAPPDATA%\Programs.
+    for variable, folder in (('ProgramFiles(x86)', ''), ('ProgramFiles', ''), ('LOCALAPPDATA', 'Programs')):
         if os.environ.get(variable):
-            candidates.append(str(Path(os.environ[variable]) / 'Inno Setup 6' / 'ISCC.exe'))
+            candidates.append(str(Path(os.environ[variable]) / folder / 'Inno Setup 6' / 'ISCC.exe'))
     return next((c for c in candidates if c and Path(c).is_file()), None)
 
 
