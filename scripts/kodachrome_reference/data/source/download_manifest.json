@@ -1,0 +1,36 @@
+[
+  {
+    "file": "CIE_xyz_1931_2deg.csv",
+    "url": "https://files.cie.co.at/Publications-datasets/CIE_xyz_1931_2deg.csv",
+    "sha256": "fa663e3535a7e0763a745993a1f0a192eb0275ac46ad2d1befd7626841e713c1",
+    "md5": "17cca777db64b17170f06f67ce9d3ab7"
+  },
+  {
+    "file": "CIE_xyz_1931_2deg.csv_metadata.json",
+    "url": "https://files.cie.co.at/Publications-datasets/CIE_xyz_1931_2deg.csv_metadata.json",
+    "sha256": "03abcaecf4e63d77045ef57c4514b52c8bb1a46dd18e1f93a50044a0f4f481c8",
+    "md5": "8c6455e9b8b1c80f8006473e4c6ae8a7"
+  },
+  {
+    "file": "CIE_std_illum_D65.csv",
+    "url": "https://files.cie.co.at/Publications-datasets/CIE_std_illum_D65.csv",
+    "sha256": "e76f210bffff3d552ef7113025da5f325d5dfec200dd4b878b1a2f3a507032cb",
+    "md5": "03d4eb9b837c60671627c946fb534deb"
+  },
+  {
+    "file": "CIE_std_illum_D65.csv_metadata_v2.json",
+    "url": "https://files.cie.co.at/Publications-datasets/CIE_std_illum_D65.csv_metadata_v2.json",
+    "sha256": "71994379b81c65db111f652e747a00b599b5456c2a8242e9a0d6f379f560a14e",
+    "md5": "e4dc338e7782a91137840d92d46c500f"
+  },
+  {
+    "file": "status_a_source.py",
+    "url": "https://raw.githubusercontent.com/gtaylor/python-colormath/master/colormath/density_standards.py",
+    "sha256": "60f4171d6d7dfbcc779b2ead494366323c3070b27a63061829a24dcf7f2b0dc3"
+  },
+  {
+    "file": "COLORMATH_LICENSE.txt",
+    "url": "https://raw.githubusercontent.com/gtaylor/python-colormath/master/LICENSE.txt",
+    "sha256": "e651e9423fb7a8621ade20490473bfe18c1a824209cb0cbd75795ca359b0c976"
+  }
+]

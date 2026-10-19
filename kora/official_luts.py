@@ -51,12 +51,16 @@ def flog2_encode(reflection):
                     .245281*np.log10(5.555556*x+.064829)+.384316)
 
 
+class MissingLUTError(ValueError):
+    """The optional external Fuji LUT is not installed."""
+
+
 @lru_cache(maxsize=10)
 def load_lut(film):
     info=MANIFEST['files'][film]
     path=lut_path(film)
     if not path.is_file():
-        raise ValueError('Fuji LUT missing. Download the GFX ETERNA 55 v1.10 ZIP from Fuji, then run: python -m kora.lut_install path/archive.zip')
+        raise MissingLUTError('Fuji LUT missing. Download the GFX ETERNA 55 v1.10 ZIP from Fuji, then run: python -m kora.lut_install path/archive.zip')
     raw=path.read_bytes()
     if hashlib.sha256(raw).hexdigest()!=info['sha256']:
         raise ValueError(f'Official LUT has been modified: {film}')

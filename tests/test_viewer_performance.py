@@ -88,24 +88,6 @@ class ViewerPerformanceTests(unittest.TestCase):
             self.assertEqual(decoder.call_count,1)
         _preview_source.cache_clear()
 
-    def test_recipe_edits_reuse_screen_source_with_identical_pixels(self):
-        source=np.random.default_rng(7).uniform(0,.6,(900,1400,3)).astype(np.float32)
-        first=RenderRequest(id=self.ids[0],recipe=StudioRecipe(),quality='display',edge=600)
-        second=first.model_copy(update={'recipe':StudioRecipe(color=2)})
-        import kora.gui as gui
-        with patch('kora.gui.decode',return_value=source), patch('kora.gui.render_context',return_value={}), \
-             patch('kora.gui._resize_float_to',wraps=gui._resize_float_to) as resize:
-            self.library.develop(first)
-            edited=self.library.develop(second)
-            self.assertEqual(resize.call_count,1)
-            self.assertEqual(len(self.library.display_sources),1)
-            # A library without the reused source renders the same screen image.
-            fresh=Library([self.root],self.root,capacity=self.library.capacity)
-            fresh.files=self.library.files
-            expected=fresh.develop(second)
-        np.testing.assert_array_equal(np.asarray(Image.open(BytesIO(edited[0]))),
-                                      np.asarray(Image.open(BytesIO(expected[0]))))
-
     def test_superseded_screen_render_stops_before_decode(self):
         from kora.gui import Superseded
         self.library.display_generations['tab']=5

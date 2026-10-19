@@ -2,15 +2,41 @@
 
 Ces notes décrivent les étapes antérieures ; suivre README.md pour installer la version actuelle.
 
-## Non publié — Réglages plus réactifs, prototype Rust
+## 0.2.44 — Chargement RAW multi-cœur, installateur Windows
 
-Un changement de réglage réutilise l'image déjà réduite à la taille de l'écran
-et les rendus abandonnés s'arrêtent au lieu de continuer en arrière-plan.
-Pixels identiques bit à bit. Sur un DNG de 60 Mpx, chaque réglage passe de 0,44
-à 0,30 s ; en faisant glisser un curseur, la dernière valeur s'affiche après
-1,75 s au lieu de 3,1 s. [Mesures](docs/EDITING_RESPONSIVENESS.md).
+Sur Mac Apple Silicon, LibRaw décode sur tous les cœurs : premier rendu complet
+d'un RAF X-T5 de 40 Mpx en 3,9 s au lieu de 13,0 s, d'un RAF X-M5 en 3,2 s au lieu
+de 8,4 s. Un patch de LibRaw rend son mode multi-cœur déterministe : pixels
+identiques bit à bit au décodage mono-thread sur 21 RAW de 11 appareils. La
+version Windows, déjà multi-cœur sans cette correction, pouvait varier sur les
+X-Trans ; sa construction utilise maintenant le même patch. Les rendus d'écran
+remplacés par un réglage plus récent s'arrêtent : en faisant glisser un curseur
+sur un DNG de 60 Mpx, la dernière valeur s'affiche après 1,75 s au lieu de 3,0 s.
+Windows : installateur par utilisateur et ExifTool inclus.
+[Mesures et vérifications](docs/LOADING_0.2.44.md).
 Prototype Rust du film officiel : mêmes pixels, 3,5 fois plus rapide.
 [Analyse et plan de migration](docs/RUST_MIGRATION.md).
+
+## 0.2.43 — Aperçus, mémoire et portabilité
+
+Réutilisation du RAW réduit entre les réglages : sur le DNG de 60 mégapixels
+testé, calcul médian de l'aperçu à 1 800 pixels de 276 à 124 ms, sans différence
+des pixels JPEG décodés. Le décodage RAW initial reste inchangé. Les exports par
+lot ne retiennent plus tous les JPEG terminés en mémoire. Les métadonnées sont
+mises en cache et les chemins Windows sont transmis en UTF-8 à ExifTool.
+
+Construction séparée pour Mac Apple Silicon et Intel, avec RAW Intel compilé
+depuis les sources vérifiées et contrôle des dépendances embarquées. Audit du
+paquet Windows x64, y compris depuis Windows ARM, et tests du paquet déplacé
+dans un dossier contenant des caractères accentués.
+[Plateformes, vérifications et limites](docs/PORTABILITY.md).
+
+## 0.2.42 — Kodachrome 64 expérimental
+
+Ajout du modèle spectral E-88 comme film spécial intégré : méthode pente,
+observation D50, repère +0,5 EV. Aperçu, zoom et exports utilisent le même
+calcul accéléré. Les simulations Fuji et le film par défaut restent inchangés.
+[Utilisation et limites](docs/KODACHROME64.md).
 
 ## 0.2.41 — Compatibilité macOS et erreurs de démarrage
 

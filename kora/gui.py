@@ -1,6 +1,6 @@
 """Local photographic studio with an independent RAW renderer."""
 from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from contextlib import contextmanager, nullcontext
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
@@ -175,7 +175,7 @@ class Library:
         self.details = {}
         self.linear_cache = OrderedDict()
         self.display_cache = OrderedDict()
-        self.display_sources = OrderedDict()
+        self.display_source_cache = OrderedDict()
         self.display_generations = OrderedDict()
         self.corrected_cache = OrderedDict()
         self.tile_cache = OrderedDict()
@@ -185,6 +185,7 @@ class Library:
         self.recipe_files = {}
         self.capacity = dict(capacity or host_capacity())
         self.linear_cache_budget = min(3*1024**3, self.capacity.get('physical_memory',8*1024**3)//10)
+        self.display_source_budget = min(128*1024**2, self.capacity.get('physical_memory',8*1024**3)//100)
         self.lock = threading.RLock()
         # Separate cheap embedded-thumbnail I/O from memory-heavy RAW decode.
         # Distinct rawpy objects may work concurrently; the limits below keep
@@ -192,6 +193,7 @@ class Library:
         self.thumbnail_lock = threading.Semaphore(self.capacity["thumbnail_workers"])
         self.decoder_lock = threading.Semaphore(self.capacity["export_workers"])
         self.full_decode_lock = threading.Lock()
+        self.display_source_lock = threading.Lock()
         self.full_render_lock = threading.Semaphore(self.capacity["export_workers"])
         self.tile_render_lock = threading.Semaphore(2)
         self.render_priority = threading.Condition()
@@ -534,20 +536,11 @@ class Library:
             size=(max(1,round(linear.shape[1]/factor)),max(1,round(linear.shape[0]/factor)))
             # Integrate full-resolution sensor detail into physical screen
             # pixels. The small half-size decode is never the displayed source.
-            # Recipe edits reuse it: only the render below depends on them.
-            source_key=(request.id,stat.st_mtime_ns,stat.st_size,size,
-                        request.recipe.lens_distortion,request.recipe.lens_vignetting)
-            with self.lock:
-                pixels=self.display_sources.get(source_key)
-                if pixels is not None:self.display_sources.move_to_end(source_key)
-            if pixels is None:
-                pixels=_resize_float_to(linear,size,Image.Resampling.BOX)
-                if request.recipe.lens_distortion!='off' or request.recipe.lens_vignetting!='off':
-                    from .optics import inspect_optics,apply_corrections
-                    pixels=apply_corrections(pixels,inspect_optics(path),request.recipe.lens_distortion,request.recipe.lens_vignetting)
-                with self.lock:
-                    self.display_sources[source_key]=pixels
-                    while len(self.display_sources)>2:self.display_sources.popitem(last=False)
+            source_key=(request.id,stat.st_mtime_ns,stat.st_size,size)
+            pixels=self.display_linear(linear,size,source_key)
+            if request.recipe.lens_distortion!='off' or request.recipe.lens_vignetting!='off':
+                from .optics import inspect_optics,apply_corrections
+                pixels=apply_corrections(pixels,inspect_optics(path),request.recipe.lens_distortion,request.recipe.lens_vignetting)
             check_current()
             context={**render_context(path),'checkpoint':check_current}
             display_recipe=request.recipe.model_copy(update={'image_size':'L'})
@@ -574,6 +567,32 @@ class Library:
                     raise Superseded('Superseded preview')
             self.check_export_priority()
         return check_current
+
+    def display_linear(self, linear, size, key):
+        """Reuse the same full-RAW reduction while film and slider settings change.
+
+        Cache before optics and rendering: those still run for every recipe.
+        Only independent, reduced buffers fit here, never views retaining a
+        full RAW. A separate fill lock coalesces simultaneous slider requests.
+        """
+        with self.lock:
+            if key in self.display_source_cache:
+                self.display_source_cache.move_to_end(key)
+                return self.display_source_cache[key]
+        with self.display_source_lock:
+            with self.lock:
+                if key in self.display_source_cache:
+                    self.display_source_cache.move_to_end(key)
+                    return self.display_source_cache[key]
+            pixels=_resize_float_to(linear,size,Image.Resampling.BOX)
+            if pixels.nbytes <= self.display_source_budget and not np.shares_memory(pixels,linear):
+                pixels.setflags(write=False)
+                with self.lock:
+                    self.display_source_cache[key]=pixels
+                    while (len(self.display_source_cache)>2 or
+                           sum(value.nbytes for value in self.display_source_cache.values())>self.display_source_budget):
+                        self.display_source_cache.popitem(last=False)
+            return pixels
 
     def full_linear(self, identifier, check_current=lambda:None, protected=None):
         """Decode once; viewport tiles and export share the active RAW buffer."""
@@ -768,14 +787,28 @@ class Library:
             with zipfile.ZipFile(archive_path, "x", compression=zipfile.ZIP_STORED) as archive:
                 workers = self.batch_export_workers(requests)
                 with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="raw-export") as pool:
-                    futures = {pool.submit(self._develop_batch_item, request): candidate
-                               for candidate, request in jobs}
-                    for future in as_completed(futures):
-                        candidate = futures[future]
-                        data, mime = future.result()
-                        if mime != "image/jpeg":
-                            raise ValueError("Batch export produced a non-JPEG image.")
-                        archive.writestr(candidate, data)
+                    pending=iter(jobs)
+                    futures={}
+                    def submit_next():
+                        job=next(pending,None)
+                        if job is not None:
+                            candidate,request=job
+                            futures[pool.submit(self._develop_batch_item,request)]=candidate
+                    for _ in range(workers):submit_next()
+                    while futures:
+                        completed,_=wait(futures,return_when=FIRST_COMPLETED)
+                        while completed:
+                            future=completed.pop()
+                            candidate=futures.pop(future)
+                            data,mime=future.result()
+                            if mime != "image/jpeg":
+                                raise ValueError("Batch export produced a non-JPEG image.")
+                            archive.writestr(candidate,data)
+                            # A Future retains its result. Release both before
+                            # starting another RAW so JPEGs cannot accumulate
+                            # for the entire batch in memory.
+                            del data,future
+                            submit_next()
         except Exception:
             archive_path.unlink(missing_ok=True)
             raise

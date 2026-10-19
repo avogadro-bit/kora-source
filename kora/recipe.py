@@ -3,13 +3,16 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
+FujiFilm = Literal["provia", "velvia", "astia", "classic_chrome", "classic_negative", "pro_neg_std", "pro_neg_hi", "eterna", "eterna_bleach", "nostalgic_negative", "reala_ace", "acros", "monochrome", "sepia"]
+
+
 class Recipe(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     version: Literal[2] = 2
     name: str = Field(default="PROVIA / Standard", min_length=1, max_length=120)
     target_model: Literal["X-T4", "X100VI"] = "X-T4"
     firmware_version: str = "2.12"
-    film: Literal["provia", "velvia", "astia", "classic_chrome", "classic_negative", "pro_neg_std", "pro_neg_hi", "eterna", "eterna_bleach", "nostalgic_negative", "reala_ace", "acros", "monochrome", "sepia"] = "provia"
+    film: FujiFilm = "provia"
     exposure: float = Field(default=0, ge=-3, le=3)
     wb: Literal["camera", "auto", "daylight", "shade", "tungsten", "kelvin"] = "camera"
     kelvin: int = Field(default=5500, ge=2500, le=10000)

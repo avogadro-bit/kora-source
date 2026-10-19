@@ -69,5 +69,8 @@ graphify-out/
 *.[sS][rR][fF]
 *.[sS][rR][wW]
 
+# Reproducible scientific tables; no photograph pixels.
+!kora/film_data/kodachrome64_v1.npz
+
 # Rust build output.
 rust/target/

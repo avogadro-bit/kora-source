@@ -1,0 +1,105 @@
+--- a/src/demosaic/xtrans_demosaic.cpp	2026-10-18 22:37:04
++++ b/src/demosaic/xtrans_demosaic.cpp	2026-10-18 22:28:27
+@@ -17,6 +17,8 @@
+  */
+ 
+ #include "../../internal/dcraw_defs.h"
++#include <atomic>
++#include <thread>
+ 
+ #define fcol(row, col) xtrans[(row + 6) % 6][(col + 6) % 6]
+ /*
+@@ -174,8 +176,25 @@
+   size_t buffer_size = LIBRAW_AHD_TILE * LIBRAW_AHD_TILE * (ndir * 11 + 6);
+   char** buffers = malloc_omp_buffers(buffer_count, buffer_size);
+ 
++  /* KORA: deterministic parallel tiles. A tile reads up to 6 pixels around
++     its 512-pixel area, and the 16-pixel overlap of the row above was
++     written by that row. Serially, the whole row above is complete first.
++     Each tile therefore waits until the row above has finished the tiles
++     up to its right-hand neighbour; tiles further right neither write what
++     it reads nor read what it writes. The output equals the serial result
++     whatever the thread count or scheduling. */
++  const int tile_step = LIBRAW_AHD_TILE - 16;
++  int tile_rows = 0, tile_cols = 0;
++  for (int top = 3; top < height - 19; top += tile_step)
++    tile_rows++;
++  for (int left = 3; left < width - 19; left += tile_step)
++    tile_cols++;
++  std::atomic<int> *tiles_done = new std::atomic<int>[tile_rows > 0 ? tile_rows : 1];
++  for (int i = 0; i < tile_rows; i++)
++    tiles_done[i].store(0, std::memory_order_relaxed);
++
+ #if defined(LIBRAW_USE_OPENMP)
+-# pragma omp parallel for schedule(dynamic) default(none) firstprivate(buffers, allhex, passes, sgrow, sgcol, ndir) shared(dir) 
++# pragma omp parallel for schedule(dynamic) default(none) firstprivate(buffers, allhex, passes, sgrow, sgcol, ndir, tile_step, tile_cols, tiles_done) shared(dir) 
+ #endif
+     for (int top = 3; top < height - 19; top += LIBRAW_AHD_TILE - 16)
+     {
+@@ -184,6 +203,8 @@
+ #else
+         char* buffer = buffers[0];
+ #endif
++        const int tile_row = (top - 3) / tile_step;
++        int tile_col = 0;
+ 
+         ushort(*rgb)[LIBRAW_AHD_TILE][LIBRAW_AHD_TILE][3], (*rix)[3];
+         short(*lab)[LIBRAW_AHD_TILE][3], (*lix)[3];
+@@ -198,8 +219,16 @@
+         homo = (char(*)[LIBRAW_AHD_TILE][LIBRAW_AHD_TILE])(
+             buffer + LIBRAW_AHD_TILE * LIBRAW_AHD_TILE * (ndir * 10 + 6));
+ 
+-        for (int left = 3; left < width - 19; left += LIBRAW_AHD_TILE - 16)
++        for (int left = 3; left < width - 19; left += LIBRAW_AHD_TILE - 16, tile_col++)
+         {
++            if (tile_row > 0)
++            {
++                // Rows are handed out in order, so the row above is already
++                // being processed: waiting on it cannot deadlock.
++                const int needed = MIN(tile_col + 2, tile_cols);
++                while (tiles_done[tile_row - 1].load(std::memory_order_acquire) < needed)
++                    std::this_thread::yield();
++            }
+             int mrow = MIN(top + LIBRAW_AHD_TILE, height - 3);
+             int mcol = MIN(left + LIBRAW_AHD_TILE, width - 3);
+             for (int row = top; row < mrow; row++)
+@@ -422,6 +451,7 @@
+                         }
+                     FORC3 image[(row + top) * width + col + left][c] = avg[c] / avg[3];
+                 }
++            tiles_done[tile_row].store(tile_col + 1, std::memory_order_release);
+         }
+     }
+   
+@@ -429,6 +459,7 @@
+ #pragma omp barrier
+ #endif
+ 
++    delete[] tiles_done;
+     free_omp_buffers(buffers, buffer_count);
+ 
+     border_interpolate(8);
+--- a/src/preprocessing/raw2image.cpp	2026-10-18 22:37:04
++++ b/src/preprocessing/raw2image.cpp	2026-10-18 22:37:04
+@@ -275,10 +275,18 @@
+ {
+   // Both cropped and uncropped
+   int maxHeight = MIN(int(S.height),int(S.raw_height)-int(S.top_margin));
+-#if defined(LIBRAW_USE_OPENMP)
+-#pragma omp parallel for schedule(dynamic) default(none) shared(dmaxp) firstprivate(cblack, maxHeight)
++  /* KORA: with half_size, 2x2 raw pixels share one image pixel, and an
++     X-Trans block can hold two samples of the same colour: the last one
++     written wins. Parallel raw rows made that winner random. One thread now
++     handles all raw rows of an image row, in the serial order. */
++  const int rowsPerImageRow = 1 << IO.shrink;
++  const int imageRows = (maxHeight + rowsPerImageRow - 1) / rowsPerImageRow;
++#if defined(LIBRAW_USE_OPENMP)
++#pragma omp parallel for schedule(dynamic) default(none) shared(dmaxp) firstprivate(cblack, maxHeight, rowsPerImageRow, imageRows)
+ #endif
+-  for (int row = 0; row < maxHeight ; row++)
++  for (int imageRow = 0; imageRow < imageRows; imageRow++)
++  for (int row = imageRow * rowsPerImageRow;
++       row < MIN((imageRow + 1) * rowsPerImageRow, maxHeight); row++)
+   {
+     int col;
+     unsigned short ldmax = 0;

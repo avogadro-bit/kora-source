@@ -9,3 +9,8 @@ recursive-include tests *.py *.cjs
 prune research
 prune outputs
 global-exclude *.cube *.bin *.DAT *.dat *.RAF *.DNG *.jpg *.npz *.npy *.pyc
+
+recursive-include scripts/kodachrome_reference *.csv *.json *.txt
+recursive-include kora/film_data *.json *.txt
+include kora/film_data/kodachrome64_v1.npz
+recursive-include tests/data *.json

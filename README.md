@@ -4,15 +4,41 @@ A local RAW studio that works without a connected camera. It develops photograph
 
 **This project is neither a Fujifilm product nor an exact reproduction of the Fujifilm image engine.** The video LUTs are official; their adaptation to photographic RAW files and the recipe controls are independent and do not guarantee an X RAW STUDIO match. The separate native-engine research workbench does not produce images.
 
-## macOS application
+## Desktop applications
 
-The GitHub release provides a self-contained **KŌRA.app** for Apple
-Silicon Macs running macOS 14 or newer, in ZIP and DMG formats. It does not
-require Python. Open the application and it launches the local studio in its own
-full-screen macOS window. On first launch, **Setup** links to the
+The [0.2.43 public beta](https://github.com/avogadro-bit/kora/releases/tag/v0.2.43)
+provides separate **KŌRA.app** packages for Apple Silicon and Intel Macs running
+macOS 14 or newer, in ZIP and DMG formats, plus a portable Windows x64 ZIP.
+Python is included. Windows requires WebView2 and .NET Framework 4.8; Windows 11
+ARM uses x64 emulation. See [Windows installation](docs/WINDOWS_RELEASE.md) and
+[tested platforms and remaining limits](docs/PORTABILITY.md).
+
+Open the application to launch the local studio in its own desktop window.
+For Fuji films, **Setup** links to the
 official Fujifilm download and lets the user choose the downloaded GFX ETERNA 55
 ZIP. The ten LUTs are hash-verified and installed locally; they are not bundled or
 redistributed by this project. See [macOS release and Gatekeeper notes](docs/MACOS_RELEASE.md).
+
+## Experimental Kodachrome 64
+
+Version 0.2.42 adds **Kodachrome 64 · Experimental** beside the Fuji films.
+Select it in FILM SIMULATION and adjust Push / Pull. This built-in model comes
+from the E-88 study; it is not a calibrated reproduction of film.
+[Method, use and limits](docs/KODACHROME64.md).
+
+## Performance and portability in 0.2.43
+
+Preview adjustments reuse the reduced RAW buffer; batch exports retain only the
+active workers' JPEGs in memory. Metadata requests share a small invalidated cache,
+and Windows metadata reads support Unicode file paths without opening a console.
+On one 60 MP DNG, repeated 1800-pixel Kodachrome previews took a median 124 ms
+instead of 276 ms, with identical decoded JPEG pixels. Initial RAW decoding is
+unchanged. Reproduce this comparison with `scripts/benchmark_preview.py`.
+
+Separate macOS arm64/x86_64 builds and Windows x64 builds now audit native
+dependencies and packaged assets before creating installers. See
+[platform targets and validation limits](docs/PORTABILITY.md); configured CI jobs
+do not establish that every supported OS has been tested.
 
 ## Features
 
@@ -25,9 +51,10 @@ redistributed by this project. See [macOS release and Gatekeeper notes](docs/MAC
 
 ## Installation
 
-Python **3.11 or newer** is required for development. The public application download is currently macOS only.
+Python **3.11 or newer** is required for development. The packaged desktop
+applications include their own Python runtime.
 
-[Download KŌRA 0.2.41 for macOS](https://github.com/avogadro-bit/kora-source/releases/tag/v0.2.41).
+[Download KŌRA 0.2.43 for macOS or Windows](https://github.com/avogadro-bit/kora/releases/tag/v0.2.43).
 
 The Python module and command are named `kora`. Existing LUT directories and saved
 macOS settings are detected automatically. Legacy identifiers are isolated in

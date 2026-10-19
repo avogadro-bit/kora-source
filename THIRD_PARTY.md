@@ -16,7 +16,27 @@ Les firmwares, modules extraits, outils tiers téléchargés et rapports de rech
 
 ## Dépendances
 
-La release macOS intègre Python, rawpy/LibRaw, NumPy, SciPy, Pillow, Pydantic, tifffile et lensfunpy/Lensfun. Leurs licences et notices sont incluses dans `Contents/Resources/Third-Party-Notices` et dans une archive jointe à la release publique. Les sources correspondantes des bibliothèques natives concernées et leurs scripts de compilation sont disponibles dans `Dependency-Sources.zip`. Voir [les notices de distribution](docs/DEPENDENCY_NOTICES.md). Unicorn et Capstone ne sont pas intégrés à l’application. ExifTool reste externe. Les LUT officielles, firmwares, photos personnelles et profils ICC propriétaires ne sont pas redistribués.
+La release macOS intègre Python, rawpy/LibRaw, NumPy, SciPy, Pillow, Pydantic, tifffile et lensfunpy/Lensfun. Leurs licences et notices sont incluses dans `Contents/Resources/Third-Party-Notices` et dans une archive jointe à la release publique. Les sources correspondantes des bibliothèques natives concernées et leurs scripts de compilation sont disponibles dans `Dependency-Sources.zip`. Voir [les notices de distribution](docs/DEPENDENCY_NOTICES.md). Unicorn et Capstone ne sont pas intégrés à l’application. ExifTool reste externe sur macOS et est inclus dans l’app Windows (voir ci-dessous). Les LUT officielles, firmwares, photos personnelles et profils ICC propriétaires ne sont pas redistribués.
+
+### Décodeur RAW multi-cœur et ExifTool
+
+À partir de 0.2.44, les apps macOS Apple Silicon et Windows x64 embarquent
+rawpy 0.27.1 compilé par ce projet (`0.27.1+kora.xtrans1`), avec OpenMP et une
+modification de LibRaw : `packaging/libraw-xtrans-deterministic-openmp.patch`
+ordonne les tuiles du dématriçage X-Trans parallèle et la copie demi-taille
+des données brutes pour reproduire exactement le résultat mono-thread. Conformément à la LGPL 2.1 de LibRaw, ce patch est
+joint aux notices et à `Dependency-Sources.zip`, avec les sources LibRaw
+d'origine ; `scripts/build_rawpy_openmp.py` et `scripts/build_rawpy_windows.py`
+reconstruisent la bibliothèque. Sur macOS, le runtime OpenMP de LLVM 22.1.8
+(Apache-2.0 avec exception LLVM) est inclus avec sa licence. Sous Windows, le
+runtime OpenMP `vcomp140.dll` est le composant redistribuable de Microsoft
+Visual C++, déjà fourni par la wheel rawpy officielle.
+
+L'app Windows embarque aussi ExifTool 13.59 pour Windows 64 bits, de Phil
+Harvey (même licence que Perl : Artistic License ou GPL), avec la distribution
+Strawberry Perl qui l'accompagne. Ses licences sont conservées dans
+`tools/exiftool_files/LICENSE` et `tools/exiftool_files/Licenses_Strawberry_Perl.zip`.
+Sur macOS, ExifTool reste une installation externe facultative.
 
 ## Code original
 
@@ -34,3 +54,16 @@ L’implémentation géométrique se réfère à la [spécification DNG Adobe](h
 et l’intégration des profils à la [documentation lensfunpy](https://letmaik.github.io/lensfunpy/).
 
 Le code original est distribué sous [licence MIT](LICENSE). Cette licence ne remplace pas celles des ressources tierces. Ce document fournit l’inventaire des ressources ; il ne constitue pas une validation juridique des droits de distribution.
+
+## Experimental Kodachrome 64 model
+
+The generated scientific tables in `kora/film_data` are adaptations of CIE
+1931 observer and D65/D50 data (CC BY-SA 4.0). The attribution, dataset DOIs,
+license link and scope of the adaptations are in `kora/film_data/NOTICE.txt`.
+Their CC BY-SA terms are separate from the MIT license on Kora's code.
+Digitized Kodak E-88 plots remain attributed to Eastman Kodak Company; they
+are reconstructed drawings, not an original numerical Kodak dataset.
+Status A weights from python-colormath are BSD-3-Clause; the license is included.
+Reconstruction code, source tables and metadata are provided in the source
+archive under `scripts/kodachrome_reference`. No photograph or Fuji LUT enters
+these generated tables. See `docs/KODACHROME64.md` for method and limitations.

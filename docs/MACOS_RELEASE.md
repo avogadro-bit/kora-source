@@ -39,15 +39,59 @@ Install a current [uv](https://docs.astral.sh/uv/) and build in isolation:
 ```bash
 uv python install 3.14.8 --install-dir .venv-runtimes --no-bin
 uv venv --python .venv-runtimes/cpython-3.14.8-macos-aarch64-none/bin/python3 .venv-macos-release
+.venv-macos-release/bin/python scripts/build_rawpy_openmp.py --install
 uv pip install --python .venv-macos-release/bin/python -c packaging/requirements-macos.txt -e '.[release,optics]' build
 .venv-macos-release/bin/python scripts/prepare_release_notices.py
 .venv-macos-release/bin/python scripts/build_macos_release.py
 ```
 
+From 0.2.44, the Apple Silicon app decodes RAW files on every core.
+`scripts/build_rawpy_openmp.py` builds rawpy 0.27.1 from checksum-verified
+sources with LLVM's OpenMP runtime and the codec versions of rawpy's own CI,
+for macOS 14, without Homebrew libraries (it needs Xcode, CMake and Ninja).
+`packaging/libraw-xtrans-deterministic-openmp.patch` keeps the output identical
+to single-threaded LibRaw; see [loading 0.2.44](LOADING_0.2.44.md). The arm64
+release build refuses any other rawpy.
+
 The script builds and verifies the `.app`, then creates a ZIP, a DMG, dependency
 source and notice ZIPs, and `SHA256SUMS.txt` under `dist/release/`. PyInstaller targets the architecture of
 the Python interpreter used for the build. Build once on Apple Silicon and once
 on Intel to publish both native variants.
+
+For an independent Intel build, use the x86_64 standalone interpreter and set
+`KORA_BUILD_VARIANT=x86_64` for **both** the notice and application build commands.
+They then use `build/x86_64/`, `dist/macos-x86_64/`, and `dist/release-x86_64/`, so
+they cannot remove the arm64 outputs. `KORA_BUILD_VARIANT=arm64` similarly isolates
+an ARM build. The variant must match the running interpreter's architecture.
+Under Rosetta, run the x86_64 interpreter explicitly; do not merely change a
+PyInstaller flag in an arm64 environment. A successful Rosetta run is not a test
+on a physical Intel Mac or an older version of macOS.
+
+rawpy 0.27.1 publishes no macOS Intel wheel, for either Python 3.13 or 3.14.
+Before installing Kora in the Intel environment, build its missing wheel:
+
+```bash
+.venv-intel-release/bin/python -m pip install -r packaging/requirements-intel-build.txt
+.venv-intel-release/bin/python scripts/build_rawpy_intel.py
+.venv-intel-release/bin/python -m pip install -c packaging/requirements-macos.txt -e '.[release,optics]' build
+KORA_BUILD_VARIANT=x86_64 .venv-intel-release/bin/python scripts/prepare_release_notices.py
+KORA_BUILD_VARIANT=x86_64 .venv-intel-release/bin/python scripts/build_macos_release.py
+```
+
+The Intel helper verifies source checksums, builds LibRaw 0.22.1 with LCMS,
+JPEG8-compatible libjpeg-turbo and Jasper under `build/intel-runtime/native`,
+repairs library paths into the wheel, and requires the same codec flags as the
+arm64 wheel. It never installs these libraries system-wide. It uses the selected
+Xcode SDK; use `--sdk /path/to/MacOSX.sdk` if the system command-line tools point
+to an SDK newer than the selected compiler can read. This does not change global
+Xcode settings. Every new binary targets macOS 14. Libjpeg SIMD is enabled when
+NASM is available, otherwise lossy-RAW decoding uses its scalar implementation;
+Pillow's JPEG export remains supplied by its own official wheel. The build manifest
+records this choice. Do not silently downgrade rawpy to obtain an older wheel.
+
+The manual `macos-release.yml` workflow follows this separation using macOS 14
+arm64 and macOS 15 Intel runners. See [portability and validation](PORTABILITY.md)
+for target versions and the distinction between an audit and a launch test.
 
 The build checks the interpreter before removing earlier build outputs, then
 audits every Mach-O file in the completed bundle. It rejects a minimum OS newer
@@ -55,6 +99,8 @@ than `LSMinimumSystemVersion`, missing native architectures, and absolute librar
 references outside macOS system libraries. The report is saved in
 `build/macos-compatibility.json`. This verifies declared binary compatibility;
 launch testing on the oldest supported macOS remains necessary.
+The model checksum, static assets and lens database in the frozen application are
+also checked before packaging. The compatibility report is copied into the release.
 
 ## Startup diagnostics
 

@@ -1,15 +1,38 @@
 """Build a portable Windows x64 KŌRA distribution on Windows."""
-import platform
-from pathlib import Path
+import argparse
+import hashlib
+import os
+import struct
+import sysconfig
+from pathlib import Path, PurePosixPath
 import shutil
 import subprocess
 import sys
+from urllib.request import urlopen
+import zipfile
 
 from PIL import Image, ImageDraw
 from kora import __version__
-from scripts.build_macos_release import digest, reset_directory
+if __package__:
+    from .build_macos_release import digest, reset_directory
+    from .build_rawpy_openmp import require_release_rawpy
+else:
+    from build_macos_release import digest, reset_directory
+    from build_rawpy_openmp import require_release_rawpy
 
 ROOT = Path(__file__).resolve().parents[1]
+# Official 64-bit Windows ExifTool package (bundles its own Strawberry Perl).
+# exiftool.org keeps only the newest version; SourceForge keeps every release.
+EXIFTOOL_VERSION = '13.59'
+EXIFTOOL_URL = f'https://sourceforge.net/projects/exiftool/files/exiftool-{EXIFTOOL_VERSION}_64.zip/download'
+EXIFTOOL_SHA256 = '44b512b25af500724ba579d0a53c8fc5851628b692dd5e5d94ae4a15c2cba9ec'
+
+
+def windows_x64_python():
+    # Windows on Arm can report platform.machine() == 'ARM64' even when the
+    # process is an emulated x64 Python. Build for the interpreter, not the host.
+    return (sys.platform == 'win32' and sysconfig.get_platform() == 'win-amd64'
+            and struct.calcsize('P') == 8)
 
 
 def build_icon():
@@ -23,9 +46,81 @@ def build_icon():
     image.save(ROOT / 'build' / 'Kora.ico', sizes=[(s, s) for s in (16, 24, 32, 48, 64, 128, 256)])
 
 
-def main():
-    if sys.platform != 'win32' or platform.machine().lower() not in ('amd64', 'x86_64'):
+def exiftool_archive(path=None):
+    """Return the checksum-verified ExifTool ZIP, downloading it only if needed."""
+    archive = Path(path) if path else ROOT / 'build' / 'exiftool' / f'exiftool-{EXIFTOOL_VERSION}_64.zip'
+    if not archive.is_file():
+        if path:
+            raise SystemExit(f'ExifTool archive not found: {archive}')
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        with urlopen(EXIFTOOL_URL, timeout=120) as response:
+            archive.write_bytes(response.read())
+    with archive.open('rb') as stream:
+        actual = hashlib.file_digest(stream, 'sha256').hexdigest()
+    if actual != EXIFTOOL_SHA256:
+        raise SystemExit(f'ExifTool {EXIFTOOL_VERSION} archive checksum mismatch: {actual}')
+    return archive
+
+
+def bundle_exiftool(app, archive):
+    """Install ExifTool as tools/exiftool.exe, where Kora looks beside Kora.exe."""
+    tools = app / 'tools'
+    shutil.rmtree(tools, ignore_errors=True)
+    prefix = PurePosixPath(f'exiftool-{EXIFTOOL_VERSION}_64')
+    with zipfile.ZipFile(archive) as source:
+        for member in source.infolist():
+            name = PurePosixPath(member.filename)
+            if member.is_dir() or name.parts[:1] != prefix.parts:
+                continue
+            relative = PurePosixPath(*name.parts[1:])
+            if not relative.parts or '..' in relative.parts or relative.is_absolute():
+                raise SystemExit(f'Unexpected ExifTool archive entry: {member.filename}')
+            if relative == PurePosixPath('exiftool(-k).exe'):
+                # The (-k) name pauses for a key press; Kora runs it headless.
+                relative = PurePosixPath('exiftool.exe')
+            elif relative.parts[0] != 'exiftool_files' and relative.name != 'README.txt':
+                continue
+            target = tools.joinpath(*relative.parts)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with source.open(member) as stream, target.open('wb') as output:
+                shutil.copyfileobj(stream, output)
+    if not (tools / 'exiftool.exe').is_file() or not (tools / 'exiftool_files' / 'LICENSE').is_file():
+        raise SystemExit('The ExifTool archive does not contain the expected Windows package.')
+    return tools
+
+
+def find_inno_setup():
+    candidates = [shutil.which('iscc')]
+    for variable in ('ProgramFiles(x86)', 'ProgramFiles'):
+        if os.environ.get(variable):
+            candidates.append(str(Path(os.environ[variable]) / 'Inno Setup 6' / 'ISCC.exe'))
+    return next((c for c in candidates if c and Path(c).is_file()), None)
+
+
+def build_installer(release):
+    """Per-user Inno Setup installer for the same files as the portable ZIP."""
+    compiler = find_inno_setup()
+    if compiler is None:
+        raise SystemExit('Inno Setup 6 (ISCC.exe) is required for the installer; use --no-installer to skip it.')
+    subprocess.run([compiler, f'/DAppVersion={__version__}', f'/DSourceDir={ROOT / "dist" / "windows" / "Kora"}',
+                    f'/DOutputDir={release}', f'/DIconFile={ROOT / "build" / "Kora.ico"}',
+                    str(ROOT / 'packaging' / 'KoraWindows.iss')], cwd=ROOT, check=True)
+    installer = release / f'Kora-{__version__}-Windows-x64-Setup.exe'
+    if not installer.is_file():
+        raise RuntimeError('The Windows installer was not produced')
+    return installer
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--exiftool-archive', type=Path,
+                        help=f'Local exiftool-{EXIFTOOL_VERSION}_64.zip; its checksum is still verified')
+    parser.add_argument('--no-installer', action='store_true', help='Build only the portable ZIP')
+    args = parser.parse_args(argv)
+    if not windows_x64_python():
         raise SystemExit('Build this release on Windows x64 using 64-bit Python.')
+    # PyPI's Windows rawpy uses OpenMP without the X-Trans ordering patch.
+    print('rawpy:', require_release_rawpy(require_patched=True), flush=True)
     work, output, release = (ROOT / 'build' / 'windows-pyinstaller', ROOT / 'dist' / 'windows', ROOT / 'dist' / 'windows-release')
     for path in (work, output, release):
         reset_directory(path)
@@ -36,11 +131,17 @@ def main():
     app = output / 'Kora'
     if not (app / 'Kora.exe').is_file():
         raise RuntimeError('Kora.exe was not produced')
+    bundle_exiftool(app, exiftool_archive(args.exiftool_archive))
+    subprocess.run([sys.executable, str(ROOT / 'scripts/audit_windows_bundle.py'), str(app),
+                    '--report', str(release / 'windows-compatibility.json')], cwd=ROOT, check=True)
     shutil.copyfile(ROOT / 'docs' / 'WINDOWS_RELEASE.md', app / 'READ-ME.md')
     archive = Path(shutil.make_archive(str(release / f'Kora-{__version__}-Windows-x64'), 'zip', output, 'Kora'))
     sources = Path(shutil.make_archive(str(release / 'Dependency-Sources-Windows'), 'zip', ROOT / 'build' / 'dependency-sources'))
     notices = Path(shutil.make_archive(str(release / 'Third-Party-Notices-Windows'), 'zip', ROOT / 'build' / 'release-notices'))
-    (release / 'SHA256SUMS-Windows.txt').write_text(''.join(f'{digest(p)}  {p.name}\n' for p in (archive, sources, notices)), encoding='utf-8')
+    artifacts = [archive, sources, notices]
+    if not args.no_installer:
+        artifacts.insert(1, build_installer(release))
+    (release / 'SHA256SUMS-Windows.txt').write_text(''.join(f'{digest(p)}  {p.name}\n' for p in artifacts), encoding='utf-8')
     print(f'Windows release: {release}')
 
 

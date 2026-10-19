@@ -37,7 +37,7 @@ def check_raw(server, roots):
     info = json.loads(request('/api/photo/' + identifier))
     source = [info['developed_size']['width'], info['developed_size']['height']]
     results = {}
-    for film in ('provia', 'classic_negative', 'pro_neg_hi'):
+    for film in ('provia', 'classic_negative', 'pro_neg_hi', 'kodachrome64'):
         recipe = {'film': film}
         body = {'id': identifier, 'recipe': recipe, 'quality': 'display', 'edge': 1024}
         preview = image_size(request('/api/render', body))
@@ -52,4 +52,7 @@ def check_raw(server, roots):
     exported = image_size(request('/api/export', {'id': identifier, 'recipe': recipe}))
     if exported != source:
         raise RuntimeError(f'Export {exported} does not match the RAW dimensions {source}')
-    return {'previews': results, 'tile': tile, 'export': exported, 'icc': True}
+    exif = info.get('exif', {})
+    metadata = {'available': exif.get('metadata_available', True) is not False,
+                'make': exif.get('Make'), 'model': exif.get('Model')}
+    return {'previews': results, 'tile': tile, 'export': exported, 'icc': True, 'metadata': metadata}
