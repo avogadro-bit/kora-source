@@ -16,7 +16,8 @@ import numpy as np
 from scipy.ndimage import map_coordinates
 from .official_luts import run_parallel_rows
 from .raw import require_local
-from .external_tools import find_exiftool, read_exiftool
+from .diagnostics import record_error
+from .external_tools import ExifToolError, find_exiftool, read_exiftool
 
 
 def parse_warp(data):
@@ -190,6 +191,12 @@ def _inspect(path,mtime,size):
     return _inspect_with_tool(path,mtime,size,find_exiftool())
 
 
+def _tool_failed(base,exc):
+    # Same fallback as a missing tool: a broken one must not block the photo.
+    record_error('exiftool-optics',exc)
+    return {**base,'label':'ExifTool failed: lens profile unavailable'}
+
+
 @lru_cache(maxsize=64)
 def _inspect_with_tool(path,mtime,size,executable):
     base={'distortion':False,'vignetting':False,'source':'none','label':'No lens profile identified','orientation':1}
@@ -197,8 +204,9 @@ def _inspect_with_tool(path,mtime,size,executable):
     # Keep resolved lens names, while retaining numeric geometry/exposure tags.
     tags=['Make','Model','LensModel','LensID','LensType','LensMake','FocalLength#','FNumber#','Orientation#',
           'PhotometricInterpretation#','Software','OpcodeList3','DefaultScale#']
-    text=read_exiftool(executable,path,['-j',*['-'+t for t in tags]])
-    metadata=json.loads(text)[0];metadata.pop('SourceFile',None)
+    try:metadata=json.loads(read_exiftool(executable,path,['-j',*['-'+t for t in tags]]))[0]
+    except (ExifToolError,ValueError,IndexError) as exc:return _tool_failed(base,exc)
+    metadata.pop('SourceFile',None)
     orientation=int(_number(metadata.get('Orientation'),1))
     base.update(metadata=metadata,orientation=orientation,
                 lens_name=_named_lens(metadata.get('LensModel')) or _named_lens(metadata.get('LensID')) or '')
@@ -213,7 +221,8 @@ def _inspect_with_tool(path,mtime,size,executable):
         if not native:return {**base,'label':'Transformed or unvalidated DNG: automatic correction disabled'}
         if metadata.get('DefaultScale') not in (None,'1 1'):
             return {**base,'label':'Unsupported DNG scale'}
-        blob=read_exiftool(executable,path,['-b','-OpcodeList3'],binary=True)
+        try:blob=read_exiftool(executable,path,['-b','-OpcodeList3'],binary=True)
+        except ExifToolError as exc:return _tool_failed(base,exc)
         try:warp=parse_warp(blob)
         except ValueError as exc:return {**base,'label':str(exc)}
         return {**base,'distortion':True,'source':'dng-warp','warp':warp,

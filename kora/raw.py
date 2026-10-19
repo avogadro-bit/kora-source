@@ -13,7 +13,8 @@ import time
 import numpy as np
 from PIL import Image, ImageCms
 import rawpy
-from .external_tools import find_exiftool, read_exiftool
+from .diagnostics import record_error
+from .external_tools import ExifToolError, find_exiftool, read_exiftool
 
 
 def local_file(path: Path) -> bool:
@@ -76,23 +77,33 @@ def exif(path: Path) -> dict:
 @lru_cache(maxsize=128)
 def _cached_exif(path,mtime,size,ctime,executable):
     if not executable:
-        if path.suffix.lower() == '.dng':
-            return dng_input_metadata(path)
-        return {"metadata_available": False, "reason": "ExifTool missing"}
+        return _without_exiftool(path, "ExifTool missing")
     tags = ["BaselineExposure", "Make", "Model", "NEFCompression", "RawImageFullSize", "ImageWidth", "ImageHeight", "ISO", "ExposureTime", "FNumber", "FilmMode", "WhiteBalance", "WhiteBalanceFineTune", "WB_GRBLevelsAuto", "WB_GRGBLevelsAuto", "DynamicRange", "DevelopmentDynamicRange", "HighlightTone", "ShadowTone", "Saturation", "Sharpness", "NoiseReduction", "GrainEffectRoughness", "GrainEffectSize", "ColorChromeEffect", "ColorChromeFXBlue", "Clarity", "DNGVersion", "PhotometricInterpretation", "Software", "ColorMatrix1", "ColorMatrix2", "ForwardMatrix1", "ForwardMatrix2", "AsShotNeutral", "CFARepeatPatternDim", "CFAPattern2", "BlackLevel", "WhiteLevel", "CalibrationIlluminant1", "CalibrationIlluminant2"]
-    text = read_exiftool(executable,path,["-j", "-G1", "-a", *["-"+t for t in tags]])
-    data = json.loads(text)[0]
+    try:
+        text = read_exiftool(executable,path,["-j", "-G1", "-a", *["-"+t for t in tags]])
+        data = json.loads(text)[0]
+    except (ExifToolError, ValueError, IndexError) as exc:
+        # A broken installation must not block the photo. The cached fallback
+        # also keeps renders from rerunning the tool and repeating the entry.
+        record_error('exiftool-metadata', exc)
+        return _without_exiftool(path, "ExifTool failed")
     return normalize_exif(data)
 
 
-def dng_input_metadata(path: Path) -> dict:
+def _without_exiftool(path, reason):
+    if path.suffix.lower() == '.dng':
+        return dng_input_metadata(path, reason)
+    return {"metadata_available": False, "reason": reason}
+
+
+def dng_input_metadata(path: Path, reason="ExifTool missing") -> dict:
     """Read the input profile contract without an external executable.
 
     Only read TIFF tags, never raster data. ExifTool still supplies the richer
     shooting and lens metadata when available.
     """
     import tifffile
-    result = {"metadata_available": False, "reason": "ExifTool missing"}
+    result = {"metadata_available": False, "reason": reason}
     try:
         with tifffile.TiffFile(path) as source:
             page = source.pages[0]
