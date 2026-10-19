@@ -9,6 +9,20 @@ from unittest.mock import Mock, patch
 from kora import windows_app, platform_support, desktop, diagnostics, official_luts, raw, gui
 
 
+class DotNetEvent:
+    """Python stand-in for a pythonnet event: += subscribes, handlers run in order."""
+    def __init__(self):
+        self.handlers = []
+
+    def __iadd__(self, handler):
+        self.handlers.append(handler)
+        return self
+
+    def fire(self, sender, args):
+        for handler in self.handlers:
+            handler(sender, args)
+
+
 class WindowsLifecycleTests(unittest.TestCase):
     def test_legacy_console_encoding_does_not_prevent_server_startup(self):
         server = Mock(server_port=8765)
@@ -26,7 +40,8 @@ class WindowsLifecycleTests(unittest.TestCase):
         stopped = threading.Event()
         server = Mock()
         server.shutdown.side_effect = stopped.set
-        webview = SimpleNamespace(settings={}, create_window=Mock(return_value=Mock()), start=Mock(side_effect=failure))
+        window = Mock(events=SimpleNamespace(before_show=DotNetEvent()))
+        webview = SimpleNamespace(settings={}, create_window=Mock(return_value=window), start=Mock(side_effect=failure))
 
         def serve(roots, port, on_ready):
             on_ready(server, 'http://127.0.0.1:8877/#session=test')
@@ -50,6 +65,50 @@ class WindowsLifecycleTests(unittest.TestCase):
         self.assertFalse(view.start.call_args.kwargs['private_mode'])
         self.assertTrue(view.settings['ALLOW_DOWNLOADS'])
         self.assertFalse(view.settings['ALLOW_FILE_URLS'])
+        window = view.create_window.return_value
+        self.assertEqual(window.events.before_show.handlers, [windows_app.hide_download_bubble])
+
+    def start_download(self, cancel=False):
+        """Initialize a fake WebView2 after pywebview, then start one download."""
+        core = SimpleNamespace(DownloadStarting=DotNetEvent())
+        control = SimpleNamespace(CoreWebView2InitializationCompleted=DotNetEvent(), CoreWebView2=core)
+        window = SimpleNamespace(native=SimpleNamespace(webview=control, Handle=Mock(**{'ToInt32.return_value': 42})))
+        order = []
+
+        def pywebview_ready(sender, args):
+            # pywebview subscribes first, and its handler shows the Save dialog.
+            sender.CoreWebView2.DownloadStarting += lambda _, download: order.append(('dialog', download.Handled))
+
+        control.CoreWebView2InitializationCompleted += pywebview_ready
+        windows_app.hide_download_bubble(window)
+        control.CoreWebView2InitializationCompleted.fire(control, SimpleNamespace(IsSuccess=True))
+        operation = SimpleNamespace(StateChanged=DotNetEvent(), ResultFilePath='C:/Users/me/Downloads/a.jpg')
+        download = SimpleNamespace(Cancel=cancel, Handled=False, DownloadOperation=operation)
+        core.DownloadStarting.fire(core, download)
+        return order, download, operation
+
+    def test_webview2_download_bubble_is_hidden_after_save_dialog(self):
+        order, download, operation = self.start_download()
+        self.assertEqual(order, [('dialog', False)])
+        self.assertTrue(download.Handled)
+        user32 = Mock()
+        with patch.object(windows_app.ctypes, 'windll', SimpleNamespace(user32=user32), create=True), \
+                patch.object(windows_app, 'record_error') as record:
+            operation.State, operation.InterruptReason = 'Completed', 'None'
+            operation.StateChanged.fire(operation, None)
+            operation.State, operation.InterruptReason = 'Interrupted', 'UserCanceled'
+            operation.StateChanged.fire(operation, None)
+            user32.MessageBoxW.assert_not_called()
+            operation.InterruptReason = 'FileAccessDenied'
+            operation.StateChanged.fire(operation, None)
+        record.assert_called_once()
+        self.assertEqual(user32.MessageBoxW.call_args.args[0], 42)
+        self.assertIn('could not save C:/Users/me/Downloads/a.jpg', user32.MessageBoxW.call_args.args[1])
+
+    def test_cancelled_save_dialog_does_not_watch_the_download(self):
+        _, download, operation = self.start_download(cancel=True)
+        self.assertTrue(download.Handled)
+        self.assertEqual(operation.StateChanged.handlers, [])
 
     def test_window_failure_stops_server(self):
         self.run_window(RuntimeError('window failed'))

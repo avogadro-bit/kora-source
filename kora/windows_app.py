@@ -19,6 +19,36 @@ def expected_films(status):
                   set(status.get('special_films', {})))
 
 
+def hide_download_bubble(window):
+    """Keep pywebview's Save dialog but hide WebView2's own download bubble.
+
+    After an export, the bubble could stay blank over the toolbar of the
+    full-screen window, and neither a click nor Escape closed it.
+    """
+    def download_starting(sender, args):
+        # pywebview's handler was subscribed first and has already asked where to save.
+        args.Handled = True
+        if not args.Cancel:
+            args.DownloadOperation.StateChanged += download_changed
+
+    def download_changed(operation, _):
+        # The bubble was the only place that reported a failed save.
+        if str(operation.State) != 'Interrupted' or str(operation.InterruptReason) == 'UserCanceled':
+            return
+        record_error('windows-download', message=f'{operation.InterruptReason}: {operation.ResultFilePath}')
+        ctypes.windll.user32.MessageBoxW(
+            window.native.Handle.ToInt32(),
+            f'KŌRA could not save {operation.ResultFilePath} ({operation.InterruptReason}).',
+            'KŌRA', 0x30)
+
+    def initialized(sender, args):
+        if args.IsSuccess:
+            sender.CoreWebView2.DownloadStarting += download_starting
+
+    # before_show runs on the GUI thread before WebView2 can finish initializing.
+    window.native.webview.CoreWebView2InitializationCompleted += initialized
+
+
 class WindowControls:
     def __init__(self):
         self.window = None
@@ -74,6 +104,7 @@ def run(roots, port, smoke_report=None):
             'KŌRA', state['url'], width=1440, height=900,
             min_size=(820, 600), fullscreen=True, background_color='#0d100f',
         )
+        controls.window.events.before_show += hide_download_bubble
         # Never fall back to the obsolete Internet Explorer renderer.
         def smoke_check():
             try:
