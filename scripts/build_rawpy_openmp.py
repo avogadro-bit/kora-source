@@ -78,8 +78,15 @@ def require_release_rawpy(require_patched):
 
 
 def run(command, **kwargs):
-    print('+', ' '.join(str(part) for part in command), flush=True)
-    subprocess.run([str(part) for part in command], check=True, **kwargs)
+    text = ' '.join(str(part) for part in command)
+    print('+', text, flush=True)
+    try:
+        subprocess.run([str(part) for part in command], check=True, **kwargs)
+    except (OSError, subprocess.CalledProcessError) as error:
+        if os.environ.get('GITHUB_ACTIONS'):
+            # Annotations stay readable when the full job log is not.
+            print(f'::error title=rawpy build::{text[:400]} failed: {error}', flush=True)
+        raise
 
 
 def download(url, digest, destination):
@@ -159,9 +166,12 @@ def prepare_rawpy_source(work):
     source = work/f'rawpy-{RAWPY_VERSION}'
     shutil.rmtree(source, ignore_errors=True)
     safe_extract(download(RAWPY_URL, RAWPY_SHA256, work/Path(RAWPY_URL).name), work)
+    # A Windows checkout may convert the patch to CRLF; LibRaw's sources are LF.
+    patch = work/XTRANS_PATCH.name
+    patch.write_bytes(XTRANS_PATCH.read_bytes().replace(b'\r\n', b'\n'))
     # Stop git from discovering this checkout when build/ sits inside it, so
     # the patch applies relative to the extracted source like GNU patch.
-    run(['git', 'apply', '-p1', '--directory=external/LibRaw', XTRANS_PATCH], cwd=source,
+    run(['git', 'apply', '-p1', '--directory=external/LibRaw', patch], cwd=source,
         env={**os.environ, 'GIT_CEILING_DIRECTORIES': str(source.parent)})
     libraw = source/'external'/'LibRaw'/'src'
     if ('tiles_done' not in (libraw/'demosaic'/'xtrans_demosaic.cpp').read_text(encoding='utf-8')

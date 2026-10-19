@@ -1,0 +1,2 @@
+# Patches apply to LF upstream sources on every OS.
+packaging/*.patch -text

@@ -97,4 +97,9 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except SystemExit as stop:
+        if stop.code not in (None, 0) and os.environ.get('GITHUB_ACTIONS'):
+            print(f'::error title=rawpy build::{stop.code}', flush=True)
+        raise

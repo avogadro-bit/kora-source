@@ -101,7 +101,8 @@ class ViewerPerformanceTests(unittest.TestCase):
         from kora.gui import Superseded
         source=np.random.default_rng(8).uniform(0,.6,(300,450,3)).astype(np.float32)
         self.library.linear_cache[self.ids[0]]=source
-        older=RenderRequest(id=self.ids[0],recipe=StudioRecipe(sharpness=2),quality='display',
+        # Built-in film: CI has no Fuji LUTs.
+        older=RenderRequest(id=self.ids[0],recipe=StudioRecipe(film='kodachrome64',sharpness=2),quality='display',
                             edge=512,view_id='tab',generation=1)
         import kora.studio as studio
         original=studio.blur
