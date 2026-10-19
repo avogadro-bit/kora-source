@@ -94,7 +94,7 @@ class StaticGuiTests(unittest.TestCase):
                         'Shadows","shadows"','Blacks","blacks"'):
             self.assertIn(control,script)
         self.assertIn('FULL RAW',script)
-        self.assertIn('body:JSON.stringify({id,recipe:settings,quality:"display",edge})',script)
+        self.assertIn('body:JSON.stringify({id,recipe:settings,quality:"display",edge,view_id:tileViewId,generation:revision})',script)
         self.assertIn('renderController?.abort()',script)
 
 
@@ -164,6 +164,15 @@ class GuiServerTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'Superseded viewport'):
                 library.render_tile(request)
             decode.assert_not_called()
+
+    def test_superseded_tile_is_a_quiet_conflict(self):
+        library=self.server.library
+        library.tile_generations['tab']=8
+        body=TileRequest(id='unused',recipe=StudioRecipe(),x=0,y=0,view_id='tab',generation=7).model_dump_json()
+        code,result=self.request('/api/tile','POST',body,{'Content-Type':'application/json'})
+        self.assertEqual((code,result['error']),(409,'Superseded viewport'))
+        self.assertNotIn('error_id',result)
+        self.assertFalse((Path(self.scratch.name)/'errors.jsonl').exists())
 
     def test_health_requires_active_session(self):
         self.assertEqual(self.request('/api/health'), (200, {'ready': True}))

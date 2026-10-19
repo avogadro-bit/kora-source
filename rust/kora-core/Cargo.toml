@@ -1,0 +1,10 @@
+[package]
+name = "kora-core"
+version = "0.1.0"
+edition = "2021"
+description = "Prototype Rust pixel core for KORA (official LUT photo adapter)"
+license = "MIT"
+publish = false
+
+[dependencies]
+rayon = "1.10"

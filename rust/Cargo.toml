@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = ["kora-core"]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

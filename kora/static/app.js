@@ -302,7 +302,7 @@ async function updateRender(){
  const showOverlay=photo.hidden;$("#loading").hidden=!showOverlay;$("#loading").textContent="Updating preview…";
  $("#recipe-state").textContent="Updating screen preview…";
  try{
-  const blob=await api("/api/render",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id,recipe:settings,quality:"display",edge}),signal:controller.signal});
+  const blob=await api("/api/render",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id,recipe:settings,quality:"display",edge,view_id:tileViewId,generation:revision}),signal:controller.signal});
   if(revision!==renderRevision||id!==selected?.id)return;
   const nextURL=await decodedPreviewURL(blob);
   if(revision!==renderRevision||id!==selected?.id){URL.revokeObjectURL(nextURL);return;}

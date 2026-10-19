@@ -37,6 +37,10 @@ from .studio import StudioRecipe as Recipe, studio_status, decode, render, encod
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 
+class Superseded(ValueError):
+    """A newer request from the same view replaced this render."""
+
+
 class RenderRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str
@@ -44,6 +48,8 @@ class RenderRequest(BaseModel):
     neutral: StrictBool = False
     quality: Literal['interactive','display','full'] = 'full'
     edge: int = Field(default=3200, ge=512, le=4096)
+    view_id: str = Field(default='', max_length=64)
+    generation: int = Field(default=0, ge=0)
 
 
 class TileRequest(BaseModel):
@@ -169,6 +175,8 @@ class Library:
         self.details = {}
         self.linear_cache = OrderedDict()
         self.display_cache = OrderedDict()
+        self.display_sources = OrderedDict()
+        self.display_generations = OrderedDict()
         self.corrected_cache = OrderedDict()
         self.tile_cache = OrderedDict()
         self.tile_generations = OrderedDict()
@@ -510,13 +518,14 @@ class Library:
     def display_preview(self, request):
         """Screen-sized rendering from the full RAW, cached independently of zoom."""
         path=Path(self.files[request.id]['path']);stat=path.stat()
+        check_current=self.display_check(request)
         key=(request.id,stat.st_mtime_ns,stat.st_size,request.recipe.model_dump_json(),request.neutral,request.edge)
         with self.lock:
             if key in self.display_cache:
                 self.display_cache.move_to_end(key)
                 return self.display_cache[key]
-        self.check_export_priority()
-        linear=self.full_linear(request.id,self.check_export_priority)
+        check_current()
+        linear=self.full_linear(request.id,check_current)
         with self.tile_slot():
             geometry=output_geometry(linear.shape,request.recipe)
             _,_,cw,ch=geometry['source']
@@ -525,19 +534,46 @@ class Library:
             size=(max(1,round(linear.shape[1]/factor)),max(1,round(linear.shape[0]/factor)))
             # Integrate full-resolution sensor detail into physical screen
             # pixels. The small half-size decode is never the displayed source.
-            pixels=_resize_float_to(linear,size,Image.Resampling.BOX)
-            if request.recipe.lens_distortion!='off' or request.recipe.lens_vignetting!='off':
-                from .optics import inspect_optics,apply_corrections
-                pixels=apply_corrections(pixels,inspect_optics(path),request.recipe.lens_distortion,request.recipe.lens_vignetting)
-            context=render_context(path)
+            # Recipe edits reuse it: only the render below depends on them.
+            source_key=(request.id,stat.st_mtime_ns,stat.st_size,size,
+                        request.recipe.lens_distortion,request.recipe.lens_vignetting)
+            with self.lock:
+                pixels=self.display_sources.get(source_key)
+                if pixels is not None:self.display_sources.move_to_end(source_key)
+            if pixels is None:
+                pixels=_resize_float_to(linear,size,Image.Resampling.BOX)
+                if request.recipe.lens_distortion!='off' or request.recipe.lens_vignetting!='off':
+                    from .optics import inspect_optics,apply_corrections
+                    pixels=apply_corrections(pixels,inspect_optics(path),request.recipe.lens_distortion,request.recipe.lens_vignetting)
+                with self.lock:
+                    self.display_sources[source_key]=pixels
+                    while len(self.display_sources)>2:self.display_sources.popitem(last=False)
+            check_current()
+            context={**render_context(path),'checkpoint':check_current}
             display_recipe=request.recipe.model_copy(update={'image_size':'L'})
             pixels=render(pixels,display_recipe,neutral=request.neutral,context=context)
+            check_current()
             result=encode(resize_float(pixels,edge),request.recipe,preview=True,detail=True)
         with self.lock:
             self.display_cache[key]=result
             while len(self.display_cache)>24 or sum(len(value[0]) for value in self.display_cache.values())>64*1024**2:
                 self.display_cache.popitem(last=False)
         return result
+
+    def display_check(self, request):
+        """Register this screen render and return a check for newer edits."""
+        with self.lock:
+            if request.view_id:
+                generations=self.display_generations
+                generations[request.view_id]=max(request.generation,generations.get(request.view_id,0))
+                generations.move_to_end(request.view_id)
+                while len(generations)>128:generations.popitem(last=False)
+        def check_current():
+            with self.lock:
+                if request.view_id and request.generation<self.display_generations.get(request.view_id,0):
+                    raise Superseded('Superseded preview')
+            self.check_export_priority()
+        return check_current
 
     def full_linear(self, identifier, check_current=lambda:None, protected=None):
         """Decode once; viewport tiles and export share the active RAW buffer."""
@@ -586,7 +622,7 @@ class Library:
         def check_current():
             with self.lock:
                 if request.view_id and request.generation<self.tile_generations.get(request.view_id,0):
-                    raise ValueError('Superseded viewport')
+                    raise Superseded('Superseded viewport')
             self.check_export_priority()
         check_current()
         recipe_key=hashlib.sha256(request.recipe.model_dump_json().encode()).hexdigest()[:20]
@@ -768,6 +804,9 @@ class Handler(BaseHTTPRequestHandler):
         return context
 
     def failure(self, exc, code=422):
+        if isinstance(exc, Superseded):
+            # A newer edit or viewport replaced this request: not an error.
+            return self.send(409, {'error': str(exc), 'diagnostic_recorded': True})
         event = record_error(urlparse(self.path).path.strip('/').replace('/', '.'), exc,
                              context={**self.diagnostic_context(), 'status': code})
         self.send(code, {'error': str(exc), 'error_id': event, 'diagnostic_recorded': True})

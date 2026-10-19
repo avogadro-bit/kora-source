@@ -2,6 +2,16 @@
 
 Ces notes décrivent les étapes antérieures ; suivre README.md pour installer la version actuelle.
 
+## Non publié — Réglages plus réactifs, prototype Rust
+
+Un changement de réglage réutilise l'image déjà réduite à la taille de l'écran
+et les rendus abandonnés s'arrêtent au lieu de continuer en arrière-plan.
+Pixels identiques bit à bit. Sur un DNG de 60 Mpx, chaque réglage passe de 0,44
+à 0,30 s ; en faisant glisser un curseur, la dernière valeur s'affiche après
+1,75 s au lieu de 3,1 s. [Mesures](docs/EDITING_RESPONSIVENESS.md).
+Prototype Rust du film officiel : mêmes pixels, 3,5 fois plus rapide.
+[Analyse et plan de migration](docs/RUST_MIGRATION.md).
+
 ## 0.2.41 — Compatibilité macOS et erreurs de démarrage
 
 Remplacement du moteur Python du paquet macOS : la version précédente contenait

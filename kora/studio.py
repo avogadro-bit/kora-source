@@ -280,6 +280,8 @@ def render(linear, r, neutral=False, *, output_transform=True, context=None, ori
     """float32 display sRGB; recipe effects are deterministic artistic approximations."""
     a=linear.astype(np.float32,copy=True)
     context=context or {}
+    # Optional cancellation between costly stages; never changes the pixels.
+    checkpoint=context.get('checkpoint') or (lambda:None)
     statistics=np.asarray(context.get('sample',a[::8,::8]),dtype=np.float32)
     if not neutral:
         native_gains=context.get('camera_wb_gains',{}).get(r.wb)
@@ -325,6 +327,7 @@ def render(linear, r, neutral=False, *, output_transform=True, context=None, ori
                             detail_scale=max(context.get('full_shape',a.shape)[:2])/1800,
                             legacy_highlights=context.get('source_exposure_anchor',False))
         a=dynamic_range_compress(a,dr)
+        checkpoint()
     if neutral:
         a=np.clip(srgb_encode(a),0,1)
         return transform_output(a,r) if output_transform else a
@@ -357,6 +360,7 @@ def render(linear, r, neutral=False, *, output_transform=True, context=None, ori
     else:
         # Legacy artistic looks are explicitly identified in the GUI.
         a,sat=_apply_legacy_film(a,r.film)
+    checkpoint()
     if shadows>0 or blacks>0:
         # Restore shadow texture; highlight recovery remains a smooth point
         # transform to avoid bright/dark rims around cloud boundaries.
@@ -380,6 +384,7 @@ def render(linear, r, neutral=False, *, output_transform=True, context=None, ori
         a=np.repeat(y[:,:,None],3,axis=2)
         if r.film=='sepia':a*=np.array([1.08,.96,.80],np.float32)
         a+=y[:,:,None]*(1-y[:,:,None])*np.array([r.mono_warm*.004-r.mono_green*.002,r.mono_green*.003,-r.mono_warm*.004-r.mono_green*.002],np.float32)
+    checkpoint()
     scale=max(context.get('full_shape',a.shape)[:2])/1600
     if r.noise_reduction>-4:
         amount=(r.noise_reduction+4)/16
@@ -395,6 +400,7 @@ def render(linear, r, neutral=False, *, output_transform=True, context=None, ori
     if r.sharpness:
         base=blur(a,max(.5,.75*scale));base*=-1;base+=a;base*=r.sharpness*.12;a+=base
     if r.grain!='off':
+        checkpoint()
         apply_film_grain(a,r.grain,r.grain_size,
                          max(context.get('full_shape',a.shape)[:2])/6000,origin)
     np.clip(a,0,1,out=a)
