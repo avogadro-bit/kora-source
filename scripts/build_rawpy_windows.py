@@ -24,6 +24,10 @@ from build_rawpy_openmp import PATCHED_LABEL, ROOT, WHEELS, prepare_rawpy_source
 WORK = ROOT/'build'/'rawpy-windows'
 VCPKG_TAG = '2026.07.29'
 VCPKG_TRIPLET = 'x64-windows-static'
+# vcpkg builds its helper ports for the host's native triplet: arm64-windows on
+# Windows on Arm, whose compilers an x64 build does not need. x64 is already
+# the default on x64 hosts and runs emulated on Arm.
+VCPKG_HOST_TRIPLET = 'x64-windows'
 
 
 def visual_studio_environment():
@@ -59,7 +63,8 @@ def install_vcpkg_dependencies(environment):
         run(['git', 'clone', 'https://github.com/microsoft/vcpkg', '-b', VCPKG_TAG, '--depth', '1', vcpkg])
         run(['cmd', '/c', vcpkg/'bootstrap-vcpkg.bat', '-disableMetrics'], cwd=vcpkg, env=environment)
     run([vcpkg/'vcpkg.exe', 'install', 'zlib', 'libjpeg-turbo[jpeg8]', 'jasper', 'lcms',
-         f'--triplet={VCPKG_TRIPLET}', '--recurse'], cwd=vcpkg, env=environment)
+         f'--triplet={VCPKG_TRIPLET}', f'--host-triplet={VCPKG_HOST_TRIPLET}', '--recurse'],
+        cwd=vcpkg, env=environment)
     return {**environment,
             'CMAKE_PREFIX_PATH': str(vcpkg/'installed'/VCPKG_TRIPLET),
             'CMAKE_TOOLCHAIN_FILE': str(vcpkg/'scripts'/'buildsystems'/'vcpkg.cmake'),
@@ -68,14 +73,20 @@ def install_vcpkg_dependencies(environment):
 
 def verify(wheel):
     """Import the built wheel in isolation and check OpenMP and the patch label."""
-    with tempfile.TemporaryDirectory(prefix='kora-rawpy-') as target:
-        run([sys.executable, '-m', 'pip', 'install', '--no-deps', '--target', target, wheel])
+    # Windows can keep the new DLLs locked while scanning them; a failed cleanup
+    # must neither fail a good build nor replace the import error below.
+    with tempfile.TemporaryDirectory(prefix='kora-rawpy-', ignore_cleanup_errors=True) as target:
+        # rawpy imports numpy, which the build interpreter need not have yet.
+        run([sys.executable, '-m', 'pip', 'install', '--target', target,
+             '-c', ROOT/'packaging'/'requirements-windows.txt', wheel])
         report = subprocess.run([sys.executable, '-c',
                                  'import json, rawpy; print(json.dumps({"version": rawpy.__version__, '
                                  '"flags": rawpy.flags, "file": rawpy.__file__}))'],
-                                env={**os.environ, 'PYTHONPATH': target}, check=True,
-                                capture_output=True, text=True, cwd=target).stdout
-    result = json.loads(report)
+                                env={**os.environ, 'PYTHONPATH': target},
+                                capture_output=True, text=True, cwd=target)
+    if report.returncode:
+        raise SystemExit(f'The built rawpy wheel does not import:\n{report.stderr}')
+    result = json.loads(report.stdout)
     if not result['flags'].get('OPENMP') or not result['version'].endswith(PATCHED_LABEL):
         raise SystemExit(f'Unexpected rawpy build: {result}')
     print(json.dumps(result))
