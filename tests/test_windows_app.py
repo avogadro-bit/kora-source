@@ -83,7 +83,7 @@ class WindowsLifecycleTests(unittest.TestCase):
         control.CoreWebView2InitializationCompleted += pywebview_ready
         windows_app.hide_download_bubble(window)
         control.CoreWebView2InitializationCompleted.fire(control, SimpleNamespace(IsSuccess=True))
-        operation = SimpleNamespace(StateChanged=DotNetEvent(), ResultFilePath='C:/Users/me/Downloads/a.jpg')
+        operation = SimpleNamespace(StateChanged=DotNetEvent(), ResultFilePath='D:/Exports/a.jpg')
         download = SimpleNamespace(Cancel=cancel, Handled=False, DownloadOperation=operation)
         core.DownloadStarting.fire(core, download)
         return order, download, operation
@@ -104,7 +104,7 @@ class WindowsLifecycleTests(unittest.TestCase):
             operation.StateChanged.fire(operation, None)
         record.assert_called_once()
         self.assertEqual(user32.MessageBoxW.call_args.args[0], 42)
-        self.assertIn('could not save C:/Users/me/Downloads/a.jpg', user32.MessageBoxW.call_args.args[1])
+        self.assertIn('could not save D:/Exports/a.jpg', user32.MessageBoxW.call_args.args[1])
 
     def test_cancelled_save_dialog_does_not_watch_the_download(self):
         _, download, operation = self.start_download(cancel=True)
