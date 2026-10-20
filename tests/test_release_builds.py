@@ -1,6 +1,8 @@
 from pathlib import Path
 import hashlib
 import os
+import shutil
+import sys
 import tarfile
 import tempfile
 import types
@@ -10,10 +12,26 @@ import zipfile
 
 from scripts import build_rawpy_openmp as rawpy_build
 from scripts import build_windows_release as windows_build
-from scripts.audit_windows_bundle import audit_bundle
+from scripts import windows_manifest
+from scripts.audit_windows_bundle import audit_bundle, pe_machine
 from tests.test_portability import packaged_assets, windows_app, write_pe
 
 ROOT = Path(__file__).resolve().parents[1]
+# Manifest of the exiftool(-k).exe launcher in ExifTool 13.59's Windows package.
+EXIFTOOL_MANIFEST = b'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+<application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings xmlns:ws2="http://schemas.microsoft.com/SMI/2016/WindowsSettings">
+        <ws2:longPathAware>true</ws2:longPathAware>
+    </windowsSettings>
+</application>
+</assembly>
+'''
+# Settings the ExifTool launcher does not have, as in python.exe's manifest.
+SECURITY_MANIFEST = EXIFTOOL_MANIFEST.replace(b'<application', b'''<trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+<security><requestedPrivileges><requestedExecutionLevel level="asInvoker"/></requestedPrivileges></security>
+</trustInfo>
+<application''', 1)
 
 
 def fake_rawpy(version, openmp):
@@ -81,7 +99,9 @@ class WindowsPackagingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             archive, app = Path(directory) / 'exiftool.zip', Path(directory) / 'KŌRA app'
             exiftool_zip(archive)
-            tools = windows_build.bundle_exiftool(app, archive)
+            with patch.object(windows_build, 'embed_utf8_manifest') as embed:
+                tools = windows_build.bundle_exiftool(app, archive)
+            embed.assert_called_once_with(tools / 'exiftool.exe')
             self.assertEqual((tools / 'exiftool.exe').read_bytes(), b'MZ launcher')
             self.assertFalse((tools / 'exiftool(-k).exe').exists())
             self.assertTrue((tools / 'exiftool_files/lib/Image/ExifTool.pm').is_file())
@@ -104,6 +124,63 @@ class WindowsPackagingTests(unittest.TestCase):
             digest = hashlib.sha256(archive.read_bytes()).hexdigest()
             with patch.object(windows_build, 'EXIFTOOL_SHA256', digest):
                 self.assertEqual(windows_build.exiftool_archive(archive), archive)
+
+    def test_utf8_manifest_sets_the_code_page_and_keeps_long_paths(self):
+        manifest = windows_manifest.UTF8_MANIFEST
+        self.assertTrue(windows_manifest.has_utf8_code_page(manifest))
+        self.assertIn(b'<longPathAware xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">true<', manifest)
+        self.assertFalse(windows_manifest.has_utf8_code_page(EXIFTOOL_MANIFEST))
+        # Windows reads activeCodePage only under application/windowsSettings.
+        misplaced = (b'<assembly xmlns="urn:schemas-microsoft-com:asm.v1"><activeCodePage '
+                     b'xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage></assembly>')
+        for other in (misplaced, manifest.replace(b'>UTF-8<', b'>Legacy<'), b'<assembly', None):
+            self.assertFalse(windows_manifest.has_utf8_code_page(other), other)
+
+    def test_utf8_manifest_replaces_the_exiftool_manifest_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            exe = Path(directory) / 'KŌRA' / 'exiftool.exe'
+            write_pe(exe, manifest=EXIFTOOL_MANIFEST)
+            self.assertEqual(windows_manifest.manifest_resources(exe), [(1033, EXIFTOOL_MANIFEST)])
+            rewrite = lambda path, manifest, language: write_pe(path, manifest=manifest)
+            with patch.object(windows_manifest, 'replace_manifest', side_effect=rewrite) as replace:
+                self.assertEqual(windows_manifest.embed_utf8_manifest(exe), 1033)
+            replace.assert_called_once_with(exe, windows_manifest.UTF8_MANIFEST, 1033)
+            self.assertEqual(windows_manifest.read_manifest(exe), windows_manifest.UTF8_MANIFEST)
+            # A launcher from another ExifTool package could declare more settings.
+            write_pe(exe, manifest=SECURITY_MANIFEST)
+            with patch.object(windows_manifest, 'replace_manifest') as replace, \
+                    self.assertRaisesRegex(SystemExit, 'would drop.*trustInfo'):
+                windows_manifest.embed_utf8_manifest(exe)
+            replace.assert_not_called()
+            write_pe(exe)
+            with self.assertRaisesRegex(ValueError, 'Invalid PE resources'):
+                windows_manifest.embed_utf8_manifest(exe)
+
+    @unittest.skipUnless(sys.platform == 'win32', 'uses the Windows resource update API')
+    def test_utf8_manifest_is_written_into_a_real_windows_executable(self):
+        # Antivirus scanners can hold the new executable open for a moment.
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            exe = Path(directory) / 'KŌRA' / 'launcher.exe'
+            exe.parent.mkdir()
+            shutil.copyfile(sys.executable, exe)
+            machine = pe_machine(exe)
+            with self.assertRaisesRegex(SystemExit, 'would drop'):
+                windows_manifest.embed_utf8_manifest(exe)
+            language = windows_manifest.manifest_resources(exe)[0][0]
+            windows_manifest.replace_manifest(exe, EXIFTOOL_MANIFEST, language)
+            self.assertEqual(windows_manifest.read_manifest(exe), EXIFTOOL_MANIFEST)
+            self.assertEqual(windows_manifest.embed_utf8_manifest(exe), language)
+            self.assertEqual(windows_manifest.manifest_resources(exe), [(language, windows_manifest.UTF8_MANIFEST)])
+            self.assertEqual(pe_machine(exe), machine)
+
+    def test_audit_requires_utf8_code_page_for_exiftool(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app = Path(directory)
+            windows_app(app)
+            self.assertTrue(audit_bundle(app)['compatible'])
+            write_pe(app / 'tools/exiftool.exe', manifest=EXIFTOOL_MANIFEST)
+            self.assertEqual(audit_bundle(app)['problems'],
+                             ['tools/exiftool.exe lacks the activeCodePage UTF-8 manifest'])
 
     def test_audit_requires_exiftool_and_openmp_runtime(self):
         with tempfile.TemporaryDirectory() as directory:

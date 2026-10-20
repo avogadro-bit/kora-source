@@ -34,7 +34,11 @@ are not bundled. Images are processed locally and originals are not modified.
 Install WebView2 from https://developer.microsoft.com/microsoft-edge/webview2/.
 From 0.2.44, ExifTool 13.59 (64-bit Windows package) is included in `tools\`
 beside `Kora.exe`, so camera settings, exposure metadata and lens identification
-work on a fresh PC. An `exiftool.exe` on PATH still takes precedence. Adobe RGB export requires a separately installed Adobe RGB (1998)
+work on a fresh PC. An `exiftool.exe` on PATH still takes precedence.
+The bundled launcher differs from the official `exiftool(-k).exe` (Oliver Betz,
+CC0) only by its application manifest, which adds `activeCodePage` UTF-8: its
+Perl runtime is then found even when the app folder or user profile contains
+characters outside the Windows code page, such as `KŌRA`. Adobe RGB export requires a separately installed Adobe RGB (1998)
 ICC profile in the Windows system color-profile folder. sRGB needs no extra profile.
 Cloud photographs must first be made available offline in File Explorer.
 

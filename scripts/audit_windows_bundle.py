@@ -10,8 +10,10 @@ import struct
 
 if __package__:
     from .audit_package_assets import audit_assets
+    from .windows_manifest import has_utf8_code_page, read_manifest
 else:
     from audit_package_assets import audit_assets
+    from windows_manifest import has_utf8_code_page, read_manifest
 
 MACHINES = {0x14c: 'x86', 0x8664: 'x64', 0xaa64: 'arm64'}
 # Visual C++ runtime imported by rawpy, lensfunpy and the Python runtime. A PC
@@ -60,9 +62,17 @@ def audit_bundle(app):
     if not list(resources.rglob('Python.Runtime.dll')):
         problems.append('Missing Python.NET runtime assembly')
     # Bundled metadata reader: Kora looks for tools/exiftool.exe beside Kora.exe.
-    required.append(app / 'tools' / 'exiftool.exe')
+    exiftool = app / 'tools' / 'exiftool.exe'
+    required.append(exiftool)
     if not (app / 'tools' / 'exiftool_files' / 'LICENSE').is_file():
         problems.append('Missing ExifTool license or support files')
+    # Without a UTF-8 code page, its launcher cannot load Perl from a folder such as KŌRA.
+    if exiftool.is_file():
+        try:
+            if not has_utf8_code_page(read_manifest(exiftool)):
+                problems.append('tools/exiftool.exe lacks the activeCodePage UTF-8 manifest')
+        except (OSError, ValueError) as exc:
+            problems.append(str(exc))
     # The parallel RAW decoder needs the OpenMP runtime shipped with rawpy.
     openmp = list(resources.rglob('vcomp140.dll'))
     if openmp:

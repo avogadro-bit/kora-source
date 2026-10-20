@@ -36,6 +36,12 @@ L'app Windows embarque aussi ExifTool 13.59 pour Windows 64 bits, de Phil
 Harvey (même licence que Perl : Artistic License ou GPL), avec la distribution
 Strawberry Perl qui l'accompagne. Ses licences sont conservées dans
 `tools/exiftool_files/LICENSE` et `tools/exiftool_files/Licenses_Strawberry_Perl.zip`.
+Seul le lanceur `tools/exiftool.exe` (`exiftool(-k).exe` d'Oliver Betz, sous
+licence CC0) est modifié : `scripts/windows_manifest.py` remplace son manifeste
+d'application par un manifeste qui garde `longPathAware` et ajoute
+`activeCodePage` UTF-8. Sans cela, il ne trouve pas Perl quand le dossier de
+l'app contient des caractères absents de la page de code Windows, comme « KŌRA ».
+Les fichiers d'`exiftool_files` sont inchangés.
 Sur macOS, ExifTool reste une installation externe facultative.
 
 ## Code original

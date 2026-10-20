@@ -10,16 +10,31 @@ from unittest.mock import Mock, patch
 from scripts.audit_package_assets import audit_assets
 from scripts.audit_windows_bundle import audit_bundle, pe_machine
 from scripts.release_paths import release_paths
+from scripts.windows_manifest import UTF8_MANIFEST
 
 
-def write_pe(path, machine=0x8664):
+def write_pe(path, machine=0x8664, manifest=None):
+    """PE header; with a manifest, a PE32+ whose only resource is RT_MANIFEST #1."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    header = bytearray(70)
+    header = bytearray(70 if manifest is None else 0x200)
     header[:2] = b'MZ'
     struct.pack_into('<I', header, 60, 64)
     header[64:68] = b'PE\0\0'
     struct.pack_into('<H', header, 68, machine)
-    path.write_bytes(header)
+    if manifest is None:
+        path.write_bytes(header)
+        return
+    # Resource tree at RVA 0x1000: type 24 -> name 1 -> language 1033 -> data.
+    resources = bytearray()
+    for name, target in ((24, 0x80000018), (1, 0x80000030), (1033, 0x48)):
+        resources += struct.pack('<12xHHII', 0, 1, name, target)
+    resources += struct.pack('<4I', 0x1058, len(manifest), 0, 0) + manifest
+    struct.pack_into('<H12xH', header, 70, 1, 240)
+    struct.pack_into('<H', header, 88, 0x20b)
+    struct.pack_into('<I', header, 88 + 108, 16)
+    struct.pack_into('<II', header, 88 + 128, 0x1000, len(resources))
+    struct.pack_into('<8s4I', header, 88 + 240, b'.rsrc', len(resources), 0x1000, len(resources), 0x200)
+    path.write_bytes(header + resources)
 
 
 def packaged_assets(resources):
@@ -51,7 +66,7 @@ def windows_app(app):
     write_pe(resources / 'rawpy/vcomp140.dll')
     for name in ('MSVCP140.dll', 'VCRUNTIME140.dll', 'VCRUNTIME140_1.dll'):
         write_pe(resources / name)
-    write_pe(app / 'tools/exiftool.exe')
+    write_pe(app / 'tools/exiftool.exe', manifest=UTF8_MANIFEST)
     (app / 'tools/exiftool_files').mkdir()
     (app / 'tools/exiftool_files/LICENSE').write_text('license', encoding='utf-8')
     return resources

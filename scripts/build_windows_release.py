@@ -17,10 +17,12 @@ if __package__:
     from .audit_windows_bundle import VC_RUNTIME, pe_machine
     from .build_macos_release import digest, reset_directory
     from .build_rawpy_openmp import require_release_rawpy
+    from .windows_manifest import embed_utf8_manifest
 else:
     from audit_windows_bundle import VC_RUNTIME, pe_machine
     from build_macos_release import digest, reset_directory
     from build_rawpy_openmp import require_release_rawpy
+    from windows_manifest import embed_utf8_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
 # Official 64-bit Windows ExifTool package (bundles its own Strawberry Perl).
@@ -88,6 +90,8 @@ def bundle_exiftool(app, archive):
                 shutil.copyfileobj(stream, output)
     if not (tools / 'exiftool.exe').is_file() or not (tools / 'exiftool_files' / 'LICENSE').is_file():
         raise SystemExit('The ExifTool archive does not contain the expected Windows package.')
+    # Otherwise the launcher cannot load Perl from a folder such as KŌRA.
+    embed_utf8_manifest(tools / 'exiftool.exe')
     return tools
 
 
